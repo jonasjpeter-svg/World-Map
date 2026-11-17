@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>World Map – 3D Globus &amp; Skylines</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
+        "topojson-client": "https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/+esm"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="canvas-container"></div>
+
+  <!-- Top Header Banner (inspired by World Map Network & Connection) -->
+  <header class="top-header">
+    <div class="brand">
+      <h1>WORLD MAP</h1>
+      <p class="subtitle">Network, Travel &amp; Skylines</p>
+    </div>
+    <div class="stats-pill" id="stats-pill">
+      <div class="stat">
+        <span class="stat-value" id="stat-countries">0</span>
+        <span class="stat-label">Länder</span>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="stat">
+        <span class="stat-value" id="stat-cities">0</span>
+        <span class="stat-label">Städte</span>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="stat">
+        <span class="stat-value" id="stat-percent">0%</span>
+        <span class="stat-label">Welt</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hover Tooltip -->
+  <div id="globe-tooltip" class="globe-tooltip hidden"></div>
+
+  <!-- Skyline Zoom Indicator -->
+  <div id="skyline-banner" class="skyline-banner hidden">
+    <span class="skyline-dot"></span>
+    <span id="skyline-banner-text">Skyline-Ansicht aktiv</span>
+  </div>
+
+  <!-- Sidebar Toggle Button -->
+  <button id="toggle-sidebar" class="toggle-sidebar-btn" title="Menü ein-/ausblenden">
+    ☰
+  </button>
+
+  <!-- Control Sidebar -->
+  <aside id="sidebar" class="sidebar">
+    <div class="sidebar-tabs">
+      <button class="tab-btn active" data-tab="explore">Entdecken</button>
+      <button class="tab-btn" data-tab="visited">Besucht</button>
+      <button class="tab-btn" data-tab="settings">Optionen</button>
+    </div>
+
+    <!-- TAB 1: Explore & Add -->
+    <div class="tab-content active" id="tab-explore">
+      <div class="section">
+        <label class="section-label" for="search-input">Land oder Stadt suchen</label>
+        <div class="search-box">
+          <input type="text" id="search-input" placeholder="z. B. Germany, Tokyo, Zürich..." autocomplete="off" />
+          <button id="clear-search" class="icon-btn hidden" title="Suche leeren">✕</button>
+        </div>
+        <div id="search-results" class="search-results"></div>
+      </div>
+
+      <div class="section">
+        <div class="section-header">
+          <span class="section-label">Interaktion auf dem Globus</span>
+        </div>
+        <div class="mode-buttons">
+          <button id="mode-country" class="mode-btn active" title="Klick auf ein Land markiert es als besucht">
+            🌍 Land markieren
+          </button>
+          <button id="mode-pin" class="mode-btn" title="Klick auf den Globus setzt einen eigenen Stadt-Pin">
+            📍 Ort / Pin setzen
+          </button>
+        </div>
+        <p class="hint-text" id="mode-hint">
+          Klicke auf ein Land auf dem Globus, um es als „Besucht“ zu markieren. Zoome nah heran, um die 3D-Skylines der Städte zu sehen!
+        </p>
+      </div>
+
+      <div class="section">
+        <span class="section-label">Schnell-Zoom zu bekannten Skylines</span>
+        <div class="quick-cities" id="quick-cities"></div>
+      </div>
+    </div>
+
+    <!-- TAB 2: Visited List -->
+    <div class="tab-content" id="tab-visited">
+      <div class="section">
+        <div class="section-header">
+          <span class="section-label">Heimatbasis (Startpunkt der Verbindungen)</span>
+        </div>
+        <select id="home-base-select" class="select-input"></select>
+      </div>
+
+      <div class="section">
+        <div class="section-header">
+          <span class="section-label">Besuchte Städte &amp; Orte</span>
+        </div>
+        <div id="visited-cities-list" class="visited-list"></div>
+      </div>
+
+      <div class="section">
+        <div class="section-header">
+          <span class="section-label">Besuchte Länder</span>
+        </div>
+        <div id="visited-countries-list" class="visited-list"></div>
+      </div>
+    </div>
+
+    <!-- TAB 3: Settings & Backup -->
+    <div class="tab-content" id="tab-settings">
+      <div class="section">
+        <span class="section-label">Darstellung</span>
+        <label class="toggle-row">
+          <span>Verbindungslinien (Arcs)</span>
+          <input type="checkbox" id="toggle-arcs" checked />
+        </label>
+        <label class="toggle-row">
+          <span>3D-Skylines beim Reinzoomen</span>
+          <input type="checkbox" id="toggle-skylines" checked />
+        </label>
+        <label class="toggle-row">
+          <span>Planeten &amp; Sterne im Hintergrund</span>
+          <input type="checkbox" id="toggle-space" checked />
+        </label>
+        <label class="toggle-row">
+          <span>Automatische Globus-Rotation</span>
+          <input type="checkbox" id="toggle-autorotate" />
+        </label>
+      </div>
+
+      <div class="section">
+        <span class="section-label">Kamera</span>
+        <button id="btn-reset-camera" class="action-btn">🌐 Globus-Ansicht zurücksetzen</button>
+      </div>
+
+      <div class="section">
+        <span class="section-label">Daten sichern / laden</span>
+        <div class="btn-row">
+          <button id="btn-export" class="action-btn secondary">⬇ Export JSON</button>
+          <label class="action-btn secondary file-label">
+            ⬆ Import JSON
+            <input type="file" id="input-import" accept=".json" hidden />
+          </label>
+        </div>
+        <button id="btn-clear-all" class="action-btn danger">🗑 Alle Markierungen löschen</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Modal for adding a custom pin -->
+  <div id="pin-modal" class="modal hidden">
+    <div class="modal-card">
+      <h3>Neuen Ort / Stadt markieren</h3>
+      <p class="modal-coords" id="pin-modal-coords"></p>
+      <label class="section-label" for="pin-name-input">Name des Ortes / der Stadt</label>
+      <input type="text" id="pin-name-input" placeholder="z. B. München, Kapstadt, Bali..." />
+      <label class="section-label" for="pin-note-input">Notiz / Jahr (optional)</label>
+      <input type="text" id="pin-note-input" placeholder="z. B. Sommer 2025" />
+      <div class="modal-actions">
+        <button id="pin-cancel" class="action-btn secondary">Abbrechen</button>
+        <button id="pin-save" class="action-btn">Speichern &amp; Skyline bauen</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom Controls Hint -->
+  <footer class="bottom-hint">
+    <span>🖱 Ziehen: Drehen</span>
+    <span>•</span>
+    <span>⚲ Scrollen: Zoomen (Skylines erscheinen bei Nahansicht)</span>
+    <span>•</span>
+    <span>Rechtsklick + Ziehen: Verschieben</span>
+  </footer>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
