@@ -1,22 +1,23 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { FEATURED_CITIES } from './cities.js';
+import { WORLD_CITIES } from './cities.js';
 import { createSpaceEnvironment } from './space.js';
-import { WorldGlobe, GLOBE_RADIUS, getFeatureCenter } from './globe.js';
-import { latLonToVector3 } from './skyline.js';
+import { WorldGlobe, GLOBE_RADIUS, getFeatureCenter, latLonToVector3 } from './globe.js';
 
-const STORAGE_KEY = 'world_map_3d_state_v1';
+const STORAGE_KEY = 'world_map_3d_state_v2';
 
 // State
 const state = {
   visitedCountries: new Set(),
-  visitedCities: new Set(['berlin']),
+  visitedCities: new Set(['de-berlin']),
   customCities: [],
-  homeBaseId: 'berlin',
+  homeBaseId: 'de-berlin',
+  focusedCountryName: 'Germany',
   mode: 'country', // 'country' | 'pin'
   settings: {
     arcs: true,
-    skylines: true,
+    labels: true,
+    clouds: true,
     space: true,
     autoRotate: false
   }
@@ -27,45 +28,37 @@ function loadState() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return;
     const data = JSON.parse(raw);
-    if (Array.isArray(data.visitedCountries)) {
-      state.visitedCountries = new Set(data.visitedCountries);
-    }
-    if (Array.isArray(data.visitedCities)) {
-      state.visitedCities = new Set(data.visitedCities);
-    }
-    if (Array.isArray(data.customCities)) {
-      state.customCities = data.customCities;
-    }
-    if (data.homeBaseId) {
-      state.homeBaseId = data.homeBaseId;
-    }
-    if (data.settings) {
-      Object.assign(state.settings, data.settings);
-    }
+    if (Array.isArray(data.visitedCountries)) state.visitedCountries = new Set(data.visitedCountries);
+    if (Array.isArray(data.visitedCities)) state.visitedCities = new Set(data.visitedCities);
+    if (Array.isArray(data.customCities)) state.customCities = data.customCities;
+    if (data.homeBaseId) state.homeBaseId = data.homeBaseId;
+    if (data.settings) Object.assign(state.settings, data.settings);
   } catch (err) {
     console.warn('Could not load saved state:', err);
   }
 }
 
 function saveState() {
-  const payload = {
-    visitedCountries: [...state.visitedCountries],
-    visitedCities: [...state.visitedCities],
-    customCities: state.customCities,
-    homeBaseId: state.homeBaseId,
-    settings: state.settings
-  };
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  localStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({
+      visitedCountries: [...state.visitedCountries],
+      visitedCities: [...state.visitedCities],
+      customCities: state.customCities,
+      homeBaseId: state.homeBaseId,
+      settings: state.settings
+    })
+  );
 }
 
 function getAllCities() {
-  return [...FEATURED_CITIES, ...state.customCities];
+  return [...WORLD_CITIES, ...state.customCities];
 }
 
 // Scene setup
 const container = document.getElementById('canvas-container');
 const scene = new THREE.Scene();
-scene.background = new THREE.Color('#04070e');
+scene.background = new THREE.Color('#03060d');
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 800);
 camera.position.set(0, 8, 28);
@@ -73,35 +66,37 @@ camera.position.set(0, 8, 28);
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.18;
 container.appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
-controls.dampingFactor = 0.06;
-controls.rotateSpeed = 0.7;
-controls.zoomSpeed = 0.9;
-controls.minDistance = 12.1;
+controls.dampingFactor = 0.075;
+controls.rotateSpeed = 0.65;
+controls.zoomSpeed = 1.0;
+controls.minDistance = 11.8;
 controls.maxDistance = 68;
 
-// Lighting
-const ambientLight = new THREE.AmbientLight('#a9bcd9', 1.35);
-scene.add(ambientLight);
+// Glossy, realistic lighting
+const hemiLight = new THREE.HemisphereLight('#bfe0ff', '#101b2e', 0.9);
+scene.add(hemiLight);
 
-const sunLight = new THREE.DirectionalLight('#fff2d6', 2.2);
-sunLight.position.set(60, 30, 45);
+const sunLight = new THREE.DirectionalLight('#fff5e0', 2.8);
+sunLight.position.set(55, 28, 45);
 scene.add(sunLight);
 
-const rimLight = new THREE.DirectionalLight('#48d1ff', 0.75);
-rimLight.position.set(-40, -20, -35);
+const rimLight = new THREE.DirectionalLight('#55d6ff', 1.1);
+rimLight.position.set(-45, -18, -35);
 scene.add(rimLight);
 
 // Space & Globe
 const spaceEnv = createSpaceEnvironment(scene);
 const globe = new WorldGlobe(scene);
 
-// Smooth Camera Fly-To animation
+// Smooth Camera Fly-To
 let flyAnim = null;
-function flyTo(lat, lon, targetDist = 14.5) {
+function flyTo(lat, lon, targetDist = 15.0) {
   const targetPos = latLonToVector3(lat, lon, targetDist);
   flyAnim = {
     startPos: camera.position.clone(),
@@ -110,12 +105,13 @@ function flyTo(lat, lon, targetDist = 14.5) {
   };
 }
 
-// Raycasting
+// Raycasting (zero texture redraw on hover -> locked 60+ FPS)
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 const tooltip = document.getElementById('globe-tooltip');
 let pointerDownPos = { x: 0, y: 0 };
 let pendingPinCoords = null;
+let lastHoverCheck = 0;
 
 function getHitLatLon(clientX, clientY) {
   const rect = renderer.domElement.getBoundingClientRect();
@@ -136,37 +132,37 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
 });
 
 renderer.domElement.addEventListener('pointermove', (e) => {
+  const now = performance.now();
+  if (now - lastHoverCheck < 35) return; // throttle hover check to ~28Hz
+  lastHoverCheck = now;
+
   const coords = getHitLatLon(e.clientX, e.clientY);
   if (!coords) {
-    globe.setHoveredCountry(null);
     tooltip.classList.add('hidden');
     return;
   }
 
   const country = globe.findCountryAt(coords.lat, coords.lon);
   if (country) {
-    globe.setHoveredCountry(country._id);
     const visited = state.visitedCountries.has(country._id);
-    tooltip.innerHTML = `<strong>${country._name}</strong> ${visited ? '✓ Besucht' : '• Klicken zum Markieren'}`;
+    const cityCount = getAllCities().filter((c) => c.country === country._name).length;
+    tooltip.innerHTML = `<strong>${country._name}</strong> ${visited ? '✓ Besucht' : '• Klicken'}${cityCount ? ` • ${cityCount} Städte` : ''}`;
+    tooltip.style.left = `${e.clientX + 14}px`;
+    tooltip.style.top = `${e.clientY + 14}px`;
+    tooltip.classList.remove('hidden');
+  } else if (state.mode === 'pin') {
+    tooltip.textContent = `📍 Pin setzen (${coords.lat.toFixed(1)}°, ${coords.lon.toFixed(1)}°)`;
     tooltip.style.left = `${e.clientX + 14}px`;
     tooltip.style.top = `${e.clientY + 14}px`;
     tooltip.classList.remove('hidden');
   } else {
-    globe.setHoveredCountry(null);
-    if (state.mode === 'pin') {
-      tooltip.textContent = `📍 Pin setzen (${coords.lat.toFixed(1)}°, ${coords.lon.toFixed(1)}°)`;
-      tooltip.style.left = `${e.clientX + 14}px`;
-      tooltip.style.top = `${e.clientY + 14}px`;
-      tooltip.classList.remove('hidden');
-    } else {
-      tooltip.classList.add('hidden');
-    }
+    tooltip.classList.add('hidden');
   }
 });
 
 renderer.domElement.addEventListener('pointerup', (e) => {
   const dist = Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y);
-  if (dist > 6 || e.button !== 0) return; // Ignore drags or right-clicks
+  if (dist > 6 || e.button !== 0) return;
 
   const coords = getHitLatLon(e.clientX, e.clientY);
   if (!coords) return;
@@ -182,9 +178,9 @@ renderer.domElement.addEventListener('pointerup', (e) => {
     return;
   }
 
-  // Country toggle mode
   const country = globe.findCountryAt(coords.lat, coords.lon);
   if (country) {
+    state.focusedCountryName = country._name;
     toggleCountryVisited(country._id);
   }
 });
@@ -193,15 +189,12 @@ renderer.domElement.addEventListener('pointerup', (e) => {
 const statCountries = document.getElementById('stat-countries');
 const statCities = document.getElementById('stat-cities');
 const statPercent = document.getElementById('stat-percent');
-const skylineBanner = document.getElementById('skyline-banner');
-const skylineBannerText = document.getElementById('skyline-banner-text');
 
 const sidebar = document.getElementById('sidebar');
 document.getElementById('toggle-sidebar').addEventListener('click', () => {
   sidebar.classList.toggle('collapsed');
 });
 
-// Tabs
 document.querySelectorAll('.tab-btn').forEach((btn) => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
@@ -221,8 +214,8 @@ function setMode(mode) {
   modeCountryBtn.classList.toggle('active', mode === 'country');
   modePinBtn.classList.toggle('active', mode === 'pin');
   modeHint.textContent = mode === 'country'
-    ? 'Klicke auf ein Land auf dem Globus, um es als „Besucht“ zu markieren. Zoome nah heran, um die 3D-Skylines der Städte zu sehen!'
-    : 'Klicke auf eine beliebige Stelle auf dem Globus, um dort einen eigenen Ort mit 3D-Skyline zu speichern.';
+    ? 'Klicke auf ein Land auf dem Globus, um es als „Besucht“ zu markieren. Beim Reinzoomen erscheinen die Städte des jeweiligen Landes.'
+    : 'Klicke auf eine beliebige Stelle auf dem Globus, um dort einen eigenen Ort zu speichern.';
 }
 
 modeCountryBtn.addEventListener('click', () => setMode('country'));
@@ -259,23 +252,20 @@ document.getElementById('pin-save').addEventListener('click', () => {
     note: pinNoteInput.value.trim(),
     lat: pendingPinCoords.lat,
     lon: pendingPinCoords.lon,
-    landmark: 'generic',
     isCustom: true
   };
 
   state.customCities.push(newCity);
   state.visitedCities.add(id);
+  state.focusedCountryName = newCity.country;
 
-  // Also mark the country if found
   const country = globe.findCountryAt(pendingPinCoords.lat, pendingPinCoords.lon);
-  if (country) {
-    state.visitedCountries.add(country._id);
-  }
+  if (country) state.visitedCountries.add(country._id);
 
   pinModal.classList.add('hidden');
   saveState();
   refreshAll();
-  flyTo(newCity.lat, newCity.lon, 13.6);
+  flyTo(newCity.lat, newCity.lon, 14.2);
   pendingPinCoords = null;
 });
 
@@ -297,6 +287,7 @@ function toggleCityVisited(cityId) {
     state.visitedCities.add(cityId);
     const city = getAllCities().find((c) => c.id === cityId);
     if (city) {
+      state.focusedCountryName = city.country;
       const country = globe.countries.find((f) => f._name === city.country);
       if (country) state.visitedCountries.add(country._id);
     }
@@ -318,7 +309,7 @@ function renderSearchResults() {
 
   const cityMatches = getAllCities()
     .filter((c) => c.name.toLowerCase().includes(q) || c.country.toLowerCase().includes(q))
-    .slice(0, 6);
+    .slice(0, 8);
 
   const countryMatches = globe.countries
     .filter((f) => f._name.toLowerCase().includes(q))
@@ -330,11 +321,11 @@ function renderSearchResults() {
     el.className = 'search-item';
     el.innerHTML = `
       <span>🏙 ${city.name} <small style="color:#9aa3b2">(${city.country})</small></span>
-      <span class="badge ${visited ? 'visited' : ''}">${visited ? 'Besucht' : 'Skyline'}</span>
+      <span class="badge ${visited ? 'visited' : ''}">${visited ? '✓ Besucht' : '+ Markieren'}</span>
     `;
     el.addEventListener('click', () => {
       if (!visited) toggleCityVisited(city.id);
-      flyTo(city.lat, city.lon, 13.5);
+      flyTo(city.lat, city.lon, 14.0);
     });
     searchResults.appendChild(el);
   }
@@ -348,9 +339,10 @@ function renderSearchResults() {
       <span class="badge ${visited ? 'visited' : ''}">${visited ? '✓ Besucht' : '+ Markieren'}</span>
     `;
     el.addEventListener('click', () => {
+      state.focusedCountryName = country._name;
       toggleCountryVisited(country._id);
       const center = getFeatureCenter(country);
-      flyTo(center.lat, center.lon, 17.5);
+      flyTo(center.lat, center.lon, 16.5);
     });
     searchResults.appendChild(el);
   }
@@ -362,23 +354,32 @@ clearSearchBtn.addEventListener('click', () => {
   renderSearchResults();
 });
 
-// Quick cities chips
-const QUICK_CITY_IDS = ['paris', 'nyc', 'berlin', 'zurich', 'dubai', 'tokyo', 'sydney', 'cairo', 'london', 'singapore'];
-function renderQuickCities() {
-  const containerEl = document.getElementById('quick-cities');
-  containerEl.innerHTML = '';
-  for (const id of QUICK_CITY_IDS) {
-    const city = FEATURED_CITIES.find((c) => c.id === id);
-    if (!city) continue;
+// Cities in focused country
+function renderFocusedCountryCities() {
+  const titleEl = document.getElementById('country-cities-title');
+  const listEl = document.getElementById('country-cities-list');
+  const countryName = state.focusedCountryName || 'Germany';
+  const cities = getAllCities().filter((c) => c.country === countryName);
+
+  titleEl.textContent = `Städte in ${countryName} (${cities.length})`;
+  listEl.innerHTML = '';
+
+  if (!cities.length) {
+    listEl.innerHTML = '<p class="hint-text">Keine vordefinierten Städte – nutze „📍 Ort / Pin setzen“, um eigene hinzuzufügen.</p>';
+    return;
+  }
+
+  for (const city of cities) {
     const visited = state.visitedCities.has(city.id);
     const btn = document.createElement('button');
     btn.className = `chip-btn ${visited ? 'visited' : ''}`;
-    btn.textContent = city.name;
-    btn.title = `Zu ${city.name} fliegen & Skyline ansehen`;
+    btn.textContent = `${visited ? '✓ ' : ''}${city.name}`;
+    btn.title = `${city.name} markieren & anfliegen`;
     btn.addEventListener('click', () => {
-      flyTo(city.lat, city.lon, 13.5);
+      toggleCityVisited(city.id);
+      flyTo(city.lat, city.lon, 14.0);
     });
-    containerEl.appendChild(btn);
+    listEl.appendChild(btn);
   }
 }
 
@@ -394,7 +395,6 @@ homeBaseSelect.addEventListener('change', () => {
 function renderVisitedLists() {
   const allCities = getAllCities();
 
-  // Home Base select
   homeBaseSelect.innerHTML = '';
   for (const city of allCities) {
     const opt = document.createElement('option');
@@ -404,7 +404,6 @@ function renderVisitedLists() {
     homeBaseSelect.appendChild(opt);
   }
 
-  // Visited cities list
   const citiesListEl = document.getElementById('visited-cities-list');
   citiesListEl.innerHTML = '';
   const visitedCityObjs = allCities.filter((c) => state.visitedCities.has(c.id));
@@ -421,12 +420,12 @@ function renderVisitedLists() {
           <small>${city.country}${city.note ? ' • ' + city.note : ''}</small>
         </div>
         <div class="visited-row-actions">
-          <button class="mini-btn" title="Skyline ansehen">🔍</button>
+          <button class="mini-btn" title="Hinfliegen">🔍</button>
           <button class="mini-btn remove" title="Entfernen">✕</button>
         </div>
       `;
-      row.querySelector('.visited-row-info').addEventListener('click', () => flyTo(city.lat, city.lon, 13.5));
-      row.querySelector('.mini-btn').addEventListener('click', () => flyTo(city.lat, city.lon, 13.5));
+      row.querySelector('.visited-row-info').addEventListener('click', () => flyTo(city.lat, city.lon, 14.0));
+      row.querySelector('.mini-btn').addEventListener('click', () => flyTo(city.lat, city.lon, 14.0));
       row.querySelector('.remove').addEventListener('click', () => {
         state.visitedCities.delete(city.id);
         if (city.isCustom) {
@@ -439,7 +438,6 @@ function renderVisitedLists() {
     }
   }
 
-  // Visited countries list
   const countriesListEl = document.getElementById('visited-countries-list');
   countriesListEl.innerHTML = '';
   const visitedCountryObjs = globe.countries.filter((f) => state.visitedCountries.has(f._id));
@@ -460,8 +458,10 @@ function renderVisitedLists() {
         </div>
       `;
       const flyCountry = () => {
+        state.focusedCountryName = country._name;
+        renderFocusedCountryCities();
         const c = getFeatureCenter(country);
-        flyTo(c.lat, c.lon, 17.5);
+        flyTo(c.lat, c.lon, 16.5);
       };
       row.querySelector('.visited-row-info').addEventListener('click', flyCountry);
       row.querySelector('.mini-btn').addEventListener('click', flyCountry);
@@ -473,21 +473,28 @@ function renderVisitedLists() {
 
 // Settings bindings
 const toggleArcs = document.getElementById('toggle-arcs');
-const toggleSkylines = document.getElementById('toggle-skylines');
+const toggleLabels = document.getElementById('toggle-labels');
+const toggleClouds = document.getElementById('toggle-clouds');
 const toggleSpace = document.getElementById('toggle-space');
 const toggleAutoRotate = document.getElementById('toggle-autorotate');
 
 function applySettings() {
   globe.showArcs = state.settings.arcs;
-  globe.showSkylines = state.settings.skylines;
+  globe.showClouds = state.settings.clouds;
   spaceEnv.setVisible(state.settings.space);
   controls.autoRotate = state.settings.autoRotate;
   controls.autoRotateSpeed = 0.55;
 
   toggleArcs.checked = state.settings.arcs;
-  toggleSkylines.checked = state.settings.skylines;
+  toggleLabels.checked = state.settings.labels;
+  toggleClouds.checked = state.settings.clouds;
   toggleSpace.checked = state.settings.space;
   toggleAutoRotate.checked = state.settings.autoRotate;
+
+  if (!state.settings.labels) {
+    labelsLayer.innerHTML = '';
+    labelPool.clear();
+  }
 }
 
 toggleArcs.addEventListener('change', () => {
@@ -495,8 +502,13 @@ toggleArcs.addEventListener('change', () => {
   saveState();
   applySettings();
 });
-toggleSkylines.addEventListener('change', () => {
-  state.settings.skylines = toggleSkylines.checked;
+toggleLabels.addEventListener('change', () => {
+  state.settings.labels = toggleLabels.checked;
+  saveState();
+  applySettings();
+});
+toggleClouds.addEventListener('change', () => {
+  state.settings.clouds = toggleClouds.checked;
   saveState();
   applySettings();
 });
@@ -574,30 +586,128 @@ function refreshAll() {
   globe.setVisitedCountries(state.visitedCountries);
   globe.syncCities(getAllCities(), state.visitedCities, state.homeBaseId);
   updateStats();
-  renderQuickCities();
+  renderFocusedCountryCities();
   renderVisitedLists();
   renderSearchResults();
 }
 
-// Resize handler
+// Lightweight pooled city labels overlay
+const labelsLayer = document.getElementById('city-labels-layer');
+const labelPool = new Map();
+const _tmpVec = new THREE.Vector3();
+const _camNorm = new THREE.Vector3();
+const _cityNorm = new THREE.Vector3();
+
+function updateCityLabels() {
+  if (!state.settings.labels) return;
+
+  const camDist = camera.position.length();
+  const isZoomedIn = camDist < 19.5;
+  _camNorm.copy(camera.position).normalize();
+
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const cities = getAllCities();
+
+  let shownCount = 0;
+  const maxLabels = isZoomedIn ? 35 : 14;
+  const placedBoxes = [];
+  const sidebarOpen = !sidebar.classList.contains('collapsed');
+
+  // Sort so visited & home cities get priority over unvisited neighbors
+  const sortedCities = [...cities].sort((a, b) => {
+    const aPrio = (a.id === state.homeBaseId ? 2 : 0) + (state.visitedCities.has(a.id) ? 1 : 0);
+    const bPrio = (b.id === state.homeBaseId ? 2 : 0) + (state.visitedCities.has(b.id) ? 1 : 0);
+    return bPrio - aPrio;
+  });
+
+  for (const city of sortedCities) {
+    const isVisited = state.visitedCities.has(city.id);
+    const isHome = city.id === state.homeBaseId;
+    const shouldConsider = isVisited || isHome || isZoomedIn;
+
+    let el = labelPool.get(city.id);
+
+    if (!shouldConsider || shownCount >= maxLabels) {
+      if (el) el.style.display = 'none';
+      continue;
+    }
+
+    _tmpVec.copy(latLonToVector3(city.lat, city.lon, GLOBE_RADIUS + 0.05));
+    _cityNorm.copy(_tmpVec).normalize();
+
+    if (_cityNorm.dot(_camNorm) < 0.28) {
+      if (el) el.style.display = 'none';
+      continue;
+    }
+
+    if (!isVisited && _tmpVec.distanceTo(camera.position) > camDist * 0.95) {
+      if (el) el.style.display = 'none';
+      continue;
+    }
+
+    _tmpVec.project(camera);
+    if (_tmpVec.z > 1) {
+      if (el) el.style.display = 'none';
+      continue;
+    }
+
+    const x = (_tmpVec.x * 0.5 + 0.5) * w;
+    const y = (-_tmpVec.y * 0.5 + 0.5) * h;
+
+    if (x < (sidebarOpen && w > 768 ? 360 : 20) || x > w - 20 || y < 80 || y > h - 45) {
+      if (el) el.style.display = 'none';
+      continue;
+    }
+
+    // Simple 2D collision avoidance so labels never overlap
+    const estW = city.name.length * 7.2 + 18;
+    const estH = 22;
+    const overlaps = placedBoxes.some(
+      (b) => Math.abs(b.x - x) < (b.w + estW) * 0.5 && Math.abs(b.y - y) < (b.h + estH) * 0.5
+    );
+    if (overlaps) {
+      if (el) el.style.display = 'none';
+      continue;
+    }
+    placedBoxes.push({ x, y, w: estW, h: estH });
+
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'city-label';
+      el.textContent = city.name;
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleCityVisited(city.id);
+      });
+      labelsLayer.appendChild(el);
+      labelPool.set(city.id, el);
+    }
+
+    el.className = `city-label${isVisited ? ' visited' : ''}${isHome ? ' home' : ''}`;
+    el.style.display = 'block';
+    el.style.left = `${x.toFixed(1)}px`;
+    el.style.top = `${y.toFixed(1)}px`;
+    shownCount++;
+  }
+}
+
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// Animation Loop
 const clock = new THREE.Clock();
 function animate() {
   requestAnimationFrame(animate);
   const elapsed = clock.getElapsedTime();
 
   if (flyAnim) {
-    flyAnim.progress += 0.035;
+    flyAnim.progress += 0.04;
     const t = Math.min(1, flyAnim.progress);
     const ease = 1 - Math.pow(1 - t, 3);
     camera.position.lerpVectors(flyAnim.startPos, flyAnim.endPos, ease);
-    // Keep spherical distance smooth
     const targetLen = THREE.MathUtils.lerp(flyAnim.startPos.length(), flyAnim.endPos.length(), ease);
     camera.position.normalize().multiplyScalar(targetLen);
     if (t >= 1) flyAnim = null;
@@ -605,25 +715,17 @@ function animate() {
 
   controls.update();
   spaceEnv.update(elapsed);
-
-  const activeSkylineCity = globe.update(elapsed, camera.position);
-  if (activeSkylineCity && state.settings.skylines) {
-    skylineBannerText.textContent = `Skyline: ${activeSkylineCity.name} (${activeSkylineCity.country})`;
-    skylineBanner.classList.remove('hidden');
-  } else {
-    skylineBanner.classList.add('hidden');
-  }
+  globe.update(elapsed);
+  updateCityLabels();
 
   renderer.render(scene, camera);
 }
 
-// Bootstrap
 async function init() {
   loadState();
   applySettings();
   await globe.loadCountries();
 
-  // First-time default sample (Germany + Berlin as home base) if nothing was saved yet
   if (!localStorage.getItem(STORAGE_KEY)) {
     const germany = globe.countries.find((c) => c._name === 'Germany');
     if (germany) state.visitedCountries.add(germany._id);

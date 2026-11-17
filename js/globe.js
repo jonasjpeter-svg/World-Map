@@ -1,8 +1,16 @@
 import * as THREE from 'three';
 import * as topojson from 'topojson-client';
-import { latLonToVector3, createCitySkyline } from './skyline.js';
 
 export const GLOBE_RADIUS = 10;
+
+export function latLonToVector3(lat, lon, radius) {
+  const phi = (90 - lat) * (Math.PI / 180);
+  const theta = (lon + 180) * (Math.PI / 180);
+  const x = -radius * Math.sin(phi) * Math.cos(theta);
+  const z = radius * Math.sin(phi) * Math.sin(theta);
+  const y = radius * Math.cos(phi);
+  return new THREE.Vector3(x, y, z);
+}
 
 function computeFeatureBBox(feature) {
   let minLon = 180, maxLon = -180, minLat = 90, maxLat = -90;
@@ -71,53 +79,109 @@ export class WorldGlobe {
 
     this.countries = [];
     this.visitedCountries = new Set();
-    this.hoveredCountryId = null;
 
-    this.citySkylines = new Map(); // id -> skylineObj
+    this.cityBeacons = null;
+    this.cityDataList = [];
     this.markerRings = [];
     this.arcsGroup = new THREE.Group();
-    this.skylinesGroup = new THREE.Group();
     this.ringsGroup = new THREE.Group();
 
-    this.group.add(this.skylinesGroup);
     this.group.add(this.ringsGroup);
     this.group.add(this.arcsGroup);
 
     this.showArcs = true;
-    this.showSkylines = true;
+    this.showClouds = true;
     this.arcAnimations = [];
 
-    this._initCanvasTexture();
+    this._initTextures();
     this._initSphere();
+    this._initClouds();
     this._initAtmosphere();
   }
 
-  _initCanvasTexture() {
+  _initTextures() {
+    // High-res color map
     this.texWidth = 4096;
     this.texHeight = 2048;
     this.canvas = document.createElement('canvas');
     this.canvas.width = this.texWidth;
     this.canvas.height = this.texHeight;
     this.ctx = this.canvas.getContext('2d');
-
     this.texture = new THREE.CanvasTexture(this.canvas);
     this.texture.colorSpace = THREE.SRGBColorSpace;
     this.texture.anisotropy = 8;
+
+    // Roughness & bump maps (for glossy oceans + tactile continents)
+    this.mapW = 2048;
+    this.mapH = 1024;
+    this.roughCanvas = document.createElement('canvas');
+    this.roughCanvas.width = this.mapW;
+    this.roughCanvas.height = this.mapH;
+    this.roughCtx = this.roughCanvas.getContext('2d');
+    this.roughTexture = new THREE.CanvasTexture(this.roughCanvas);
+
+    this.bumpCanvas = document.createElement('canvas');
+    this.bumpCanvas.width = this.mapW;
+    this.bumpCanvas.height = this.mapH;
+    this.bumpCtx = this.bumpCanvas.getContext('2d');
+    this.bumpTexture = new THREE.CanvasTexture(this.bumpCanvas);
   }
 
   _initSphere() {
-    const geo = new THREE.SphereGeometry(GLOBE_RADIUS, 96, 64);
-    const mat = new THREE.MeshStandardMaterial({
+    const geo = new THREE.SphereGeometry(GLOBE_RADIUS, 112, 80);
+    const mat = new THREE.MeshPhysicalMaterial({
       map: this.texture,
-      roughness: 0.78,
-      metalness: 0.12
+      roughnessMap: this.roughTexture,
+      bumpMap: this.bumpTexture,
+      bumpScale: 0.055,
+      roughness: 1.0,
+      metalness: 0.16,
+      clearcoat: 0.88,
+      clearcoatRoughness: 0.12,
+      reflectivity: 0.95
     });
     this.sphereMesh = new THREE.Mesh(geo, mat);
     this.group.add(this.sphereMesh);
   }
 
+  _initClouds() {
+    const cCanvas = document.createElement('canvas');
+    cCanvas.width = 1024;
+    cCanvas.height = 512;
+    const cCtx = cCanvas.getContext('2d');
+    cCtx.clearRect(0, 0, 1024, 512);
+
+    for (let i = 0; i < 220; i++) {
+      const x = Math.random() * 1024;
+      const y = 30 + Math.random() * 452;
+      const rx = 18 + Math.random() * 75;
+      const ry = 4 + Math.random() * 16;
+      const grad = cCtx.createRadialGradient(x, y, 0, x, y, rx);
+      grad.addColorStop(0, 'rgba(255, 255, 255, 0.22)');
+      grad.addColorStop(0.5, 'rgba(220, 238, 255, 0.09)');
+      grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      cCtx.fillStyle = grad;
+      cCtx.beginPath();
+      cCtx.ellipse(x, y, rx, ry, (Math.random() - 0.5) * 0.3, 0, Math.PI * 2);
+      cCtx.fill();
+    }
+
+    const cloudTex = new THREE.CanvasTexture(cCanvas);
+    cloudTex.colorSpace = THREE.SRGBColorSpace;
+    const cloudGeo = new THREE.SphereGeometry(GLOBE_RADIUS * 1.008, 64, 48);
+    const cloudMat = new THREE.MeshStandardMaterial({
+      map: cloudTex,
+      transparent: true,
+      opacity: 0.48,
+      depthWrite: false,
+      roughness: 0.9
+    });
+    this.cloudsMesh = new THREE.Mesh(cloudGeo, cloudMat);
+    this.group.add(this.cloudsMesh);
+  }
+
   _initAtmosphere() {
-    const atmosGeo = new THREE.SphereGeometry(GLOBE_RADIUS * 1.035, 64, 48);
+    const atmosGeo = new THREE.SphereGeometry(GLOBE_RADIUS * 1.04, 64, 48);
     const atmosMat = new THREE.ShaderMaterial({
       vertexShader: `
         varying vec3 vNormal;
@@ -129,8 +193,8 @@ export class WorldGlobe {
       fragmentShader: `
         varying vec3 vNormal;
         void main() {
-          float intensity = pow(0.62 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 3.2);
-          gl_FragColor = vec4(0.28, 0.78, 1.0, 1.0) * intensity * 0.65;
+          float intensity = pow(0.65 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 3.0);
+          gl_FragColor = vec4(0.32, 0.78, 1.0, 1.0) * intensity * 0.85;
         }
       `,
       blending: THREE.AdditiveBlending,
@@ -156,19 +220,46 @@ export class WorldGlobe {
         return f;
       });
 
-    this.redrawTexture();
+    this.redrawTextures();
     return this.countries;
   }
 
-  redrawTexture() {
-    const { ctx, texWidth: w, texHeight: h } = this;
+  _traceFeaturePath(ctx, feature, w, h) {
+    const geom = feature.geometry;
+    const polys = geom.type === 'Polygon' ? [geom.coordinates] : geom.coordinates;
+    ctx.beginPath();
+    for (const poly of polys) {
+      for (const ring of poly) {
+        for (let i = 0; i < ring.length; i++) {
+          const [lon, lat] = ring[i];
+          const x = ((lon + 180) / 360) * w;
+          const y = ((90 - lat) / 180) * h;
+          if (i === 0) ctx.moveTo(x, y);
+          else {
+            const prevLon = ring[i - 1][0];
+            if (Math.abs(lon - prevLon) > 180) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+        }
+        ctx.closePath();
+      }
+    }
+  }
 
-    // Ocean background (dark slate matching reference)
-    ctx.fillStyle = '#1b2029';
+  redrawTextures() {
+    const { ctx, texWidth: w, texHeight: h } = this;
+    const { roughCtx, bumpCtx, mapW, mapH } = this;
+
+    // 1. Deep glossy sapphire ocean gradient
+    const oceanGrad = ctx.createLinearGradient(0, 0, 0, h);
+    oceanGrad.addColorStop(0, '#07162b');
+    oceanGrad.addColorStop(0.5, '#0b2242');
+    oceanGrad.addColorStop(1, '#07162b');
+    ctx.fillStyle = oceanGrad;
     ctx.fillRect(0, 0, w, h);
 
-    // Subtle lat/lon grid
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+    // Subtle ocean grid
+    ctx.strokeStyle = 'rgba(110, 190, 255, 0.05)';
     ctx.lineWidth = 1;
     for (let lon = -180; lon <= 180; lon += 15) {
       const x = ((lon + 180) / 360) * w;
@@ -185,114 +276,127 @@ export class WorldGlobe {
       ctx.stroke();
     }
 
-    // Draw countries
+    // Roughness: oceans = very glossy (dark grey #242424 -> roughness ~0.14)
+    roughCtx.fillStyle = '#242424';
+    roughCtx.fillRect(0, 0, mapW, mapH);
+
+    // Bump: oceans = flat (#181818)
+    bumpCtx.fillStyle = '#181818';
+    bumpCtx.fillRect(0, 0, mapW, mapH);
+
+    // 2. Countries
     for (const feature of this.countries) {
       const isVisited = this.visitedCountries.has(feature._id);
-      const isHovered = this.hoveredCountryId === feature._id;
 
+      // Color map
+      this._traceFeaturePath(ctx, feature, w, h);
       if (isVisited) {
-        ctx.fillStyle = isHovered ? '#edc25e' : '#c99b38';
-        ctx.strokeStyle = '#ffe18c';
-        ctx.lineWidth = 1.6;
+        ctx.fillStyle = '#dba93b';
+        ctx.strokeStyle = '#ffe594';
+        ctx.lineWidth = 2.0;
       } else {
-        ctx.fillStyle = isHovered ? '#535c6e' : '#3a404c';
-        ctx.strokeStyle = '#5c6577';
-        ctx.lineWidth = 1.0;
-      }
-
-      const geom = feature.geometry;
-      const polys = geom.type === 'Polygon' ? [geom.coordinates] : geom.coordinates;
-
-      ctx.beginPath();
-      for (const poly of polys) {
-        for (const ring of poly) {
-          for (let i = 0; i < ring.length; i++) {
-            const [lon, lat] = ring[i];
-            const x = ((lon + 180) / 360) * w;
-            const y = ((90 - lat) / 180) * h;
-            if (i === 0) ctx.moveTo(x, y);
-            else {
-              // Avoid antimeridian horizontal streaks
-              const prevLon = ring[i - 1][0];
-              if (Math.abs(lon - prevLon) > 180) {
-                ctx.moveTo(x, y);
-              } else {
-                ctx.lineTo(x, y);
-              }
-            }
-          }
-          ctx.closePath();
-        }
+        ctx.fillStyle = '#293847';
+        ctx.strokeStyle = '#537391';
+        ctx.lineWidth = 1.25;
       }
       ctx.fill();
       ctx.stroke();
+
+      // Roughness map (visited = glossy gold #303030, unvisited = satin #686868)
+      this._traceFeaturePath(roughCtx, feature, mapW, mapH);
+      roughCtx.fillStyle = isVisited ? '#303030' : '#686868';
+      roughCtx.fill();
+
+      // Bump map (continents raised slightly)
+      this._traceFeaturePath(bumpCtx, feature, mapW, mapH);
+      bumpCtx.fillStyle = isVisited ? '#b0b0b0' : '#808080';
+      bumpCtx.fill();
     }
 
     this.texture.needsUpdate = true;
+    this.roughTexture.needsUpdate = true;
+    this.bumpTexture.needsUpdate = true;
   }
 
   findCountryAt(lat, lon) {
     for (const f of this.countries) {
-      if (pointInFeature(lon, lat, f)) {
-        return f;
-      }
+      if (pointInFeature(lon, lat, f)) return f;
     }
     return null;
   }
 
   setVisitedCountries(ids) {
     this.visitedCountries = new Set(ids);
-    this.redrawTexture();
-  }
-
-  setHoveredCountry(id) {
-    if (this.hoveredCountryId === id) return;
-    this.hoveredCountryId = id;
-    this.redrawTexture();
+    this.redrawTextures();
   }
 
   syncCities(allCities, visitedCityIds, homeBaseId) {
-    // Clear existing rings & skylines
-    while (this.skylinesGroup.children.length) {
-      this.skylinesGroup.remove(this.skylinesGroup.children[0]);
+    this.cityDataList = allCities;
+
+    // 1. Single InstancedMesh for all city beacons (1 draw call = ultra fast!)
+    if (this.cityBeacons) {
+      this.group.remove(this.cityBeacons);
+      this.cityBeacons.geometry.dispose();
+      this.cityBeacons.material.dispose();
     }
+
+    const beaconGeo = new THREE.SphereGeometry(0.055, 10, 10);
+    const beaconMat = new THREE.MeshStandardMaterial({
+      color: '#ffffff',
+      roughness: 0.15,
+      metalness: 0.4,
+      emissive: '#1e354d',
+      emissiveIntensity: 0.5
+    });
+
+    this.cityBeacons = new THREE.InstancedMesh(beaconGeo, beaconMat, allCities.length);
+    const dummy = new THREE.Object3D();
+    const colorVisited = new THREE.Color('#ffd369');
+    const colorHome = new THREE.Color('#48d1ff');
+    const colorDefault = new THREE.Color('#7ec8e3');
+
+    allCities.forEach((city, idx) => {
+      const isVisited = visitedCityIds.has(city.id);
+      const isHome = city.id === homeBaseId;
+      const pos = latLonToVector3(city.lat, city.lon, GLOBE_RADIUS + 0.03);
+      dummy.position.copy(pos);
+      const scale = isHome ? 1.55 : isVisited ? 1.35 : 0.72;
+      dummy.scale.setScalar(scale);
+      dummy.updateMatrix();
+      this.cityBeacons.setMatrixAt(idx, dummy.matrix);
+      this.cityBeacons.setColorAt(idx, isHome ? colorHome : isVisited ? colorVisited : colorDefault);
+    });
+
+    this.cityBeacons.instanceMatrix.needsUpdate = true;
+    if (this.cityBeacons.instanceColor) this.cityBeacons.instanceColor.needsUpdate = true;
+    this.group.add(this.cityBeacons);
+
+    // 2. Pulsing target rings for visited cities
     while (this.ringsGroup.children.length) {
       this.ringsGroup.remove(this.ringsGroup.children[0]);
     }
-    this.citySkylines.clear();
     this.markerRings = [];
 
     for (const city of allCities) {
-      const isVisited = visitedCityIds.has(city.id);
-      const skyline = createCitySkyline(city, GLOBE_RADIUS, isVisited);
-      this.skylinesGroup.add(skyline.root);
-      this.citySkylines.set(city.id, skyline);
-
-      if (isVisited) {
+      if (visitedCityIds.has(city.id)) {
         this._createPulsingRings(city.lat, city.lon, city.id === homeBaseId);
       }
     }
 
+    // 3. Connection arcs
     this._rebuildArcs(allCities, visitedCityIds, homeBaseId);
   }
 
   _createPulsingRings(lat, lon, isHome) {
-    const pos = latLonToVector3(lat, lon, GLOBE_RADIUS + 0.025);
+    const pos = latLonToVector3(lat, lon, GLOBE_RADIUS + 0.028);
     const normal = pos.clone().normalize();
     const ringGroup = new THREE.Group();
     ringGroup.position.copy(pos);
     ringGroup.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
 
-    const color = isHome ? '#48d1ff' : '#f0c05a';
-    const dot = new THREE.Mesh(
-      new THREE.CircleGeometry(0.08, 20),
-      new THREE.MeshBasicMaterial({ color: '#ffffff', side: THREE.DoubleSide })
-    );
-    dot.rotation.x = -Math.PI / 2;
-    ringGroup.add(dot);
-
+    const color = isHome ? '#48d1ff' : '#ffd369';
     for (let i = 0; i < 2; i++) {
-      const ringGeo = new THREE.RingGeometry(0.11, 0.145, 32);
+      const ringGeo = new THREE.RingGeometry(0.11, 0.145, 28);
       ringGeo.rotateX(-Math.PI / 2);
       const ringMat = new THREE.MeshBasicMaterial({
         color,
@@ -304,7 +408,6 @@ export class WorldGlobe {
       ringGroup.add(ring);
       this.markerRings.push({ mesh: ring, mat: ringMat, phase: i * 0.5 });
     }
-
     this.ringsGroup.add(ringGroup);
   }
 
@@ -332,16 +435,14 @@ export class WorldGlobe {
       const points = curve.getPoints(56);
       const geo = new THREE.BufferGeometry().setFromPoints(points);
 
-      // Base glowing white/cyan arc
       const mat = new THREE.LineBasicMaterial({
-        color: '#8be4ff',
+        color: '#6ce0ff',
         transparent: true,
-        opacity: 0.55
+        opacity: 0.62
       });
       const line = new THREE.Line(geo, mat);
       this.arcsGroup.add(line);
 
-      // Traveling pulse particle along the arc
       const pulseMesh = new THREE.Mesh(
         new THREE.SphereGeometry(0.085, 10, 10),
         new THREE.MeshBasicMaterial({ color: '#ffffff' })
@@ -356,8 +457,12 @@ export class WorldGlobe {
     }
   }
 
-  update(elapsed, cameraPosition) {
-    // 1. Pulse target rings
+  update(elapsed) {
+    this.cloudsMesh.visible = this.showClouds;
+    if (this.showClouds) {
+      this.cloudsMesh.rotation.y = elapsed * 0.008;
+    }
+
     for (const r of this.markerRings) {
       const t = (elapsed * 0.65 + r.phase) % 1;
       const scale = 1 + t * 2.2;
@@ -365,7 +470,6 @@ export class WorldGlobe {
       r.mat.opacity = (1 - t) * 0.78;
     }
 
-    // 2. Animate connection arc pulses
     this.arcsGroup.visible = this.showArcs;
     if (this.showArcs) {
       for (const a of this.arcAnimations) {
@@ -373,34 +477,5 @@ export class WorldGlobe {
         a.pulseMesh.position.copy(a.curve.getPoint(t));
       }
     }
-
-    // 3. Grow/shrink 3D skylines smoothly when zooming in!
-    this.skylinesGroup.visible = this.showSkylines;
-    let activeSkylineCity = null;
-
-    if (this.showSkylines) {
-      const camDist = cameraPosition.length();
-      // Zoomed in threshold: camDist < 19.5 (globe radius = 10)
-      const zoomFactor = THREE.MathUtils.clamp((20.5 - camDist) / 6.5, 0, 1);
-
-      let closestDist = Infinity;
-      for (const skyline of this.citySkylines.values()) {
-        const worldPos = skyline.root.position;
-        const dToCam = worldPos.distanceTo(cameraPosition);
-        // Also ensure it's on the camera-facing hemisphere
-        const facing = worldPos.clone().normalize().dot(cameraPosition.clone().normalize());
-        const targetScale = facing > 0.25 ? Math.max(0.001, zoomFactor * (facing > 0.65 ? 1.0 : 0.65)) : 0.001;
-
-        skyline.currentScaleY = THREE.MathUtils.lerp(skyline.currentScaleY, targetScale, 0.12);
-        skyline.skylineGroup.scale.set(1, skyline.currentScaleY, 1);
-
-        if (zoomFactor > 0.35 && facing > 0.6 && dToCam < closestDist) {
-          closestDist = dToCam;
-          activeSkylineCity = skyline.city;
-        }
-      }
-    }
-
-    return activeSkylineCity;
   }
 }

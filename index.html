@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>World Map – 3D Globus &amp; Skylines</title>
+  <title>World Map – 3D Globus</title>
   <link rel="stylesheet" href="styles.css" />
   <script type="importmap">
     {
@@ -17,12 +17,13 @@
 </head>
 <body>
   <div id="canvas-container"></div>
+  <div id="city-labels-layer" class="city-labels-layer"></div>
 
-  <!-- Top Header Banner (inspired by World Map Network & Connection) -->
+  <!-- Top Header Banner -->
   <header class="top-header">
     <div class="brand">
       <h1>WORLD MAP</h1>
-      <p class="subtitle">Network, Travel &amp; Skylines</p>
+      <p class="subtitle">Network &amp; Travel Globe</p>
     </div>
     <div class="stats-pill" id="stats-pill">
       <div class="stat">
@@ -44,12 +45,6 @@
 
   <!-- Hover Tooltip -->
   <div id="globe-tooltip" class="globe-tooltip hidden"></div>
-
-  <!-- Skyline Zoom Indicator -->
-  <div id="skyline-banner" class="skyline-banner hidden">
-    <span class="skyline-dot"></span>
-    <span id="skyline-banner-text">Skyline-Ansicht aktiv</span>
-  </div>
 
   <!-- Sidebar Toggle Button -->
   <button id="toggle-sidebar" class="toggle-sidebar-btn" title="Menü ein-/ausblenden">
@@ -88,13 +83,13 @@
           </button>
         </div>
         <p class="hint-text" id="mode-hint">
-          Klicke auf ein Land auf dem Globus, um es als „Besucht“ zu markieren. Zoome nah heran, um die 3D-Skylines der Städte zu sehen!
+          Klicke auf ein Land auf dem Globus, um es als „Besucht“ zu markieren. Beim Reinzoomen erscheinen die Städte des jeweiligen Landes.
         </p>
       </div>
 
-      <div class="section">
-        <span class="section-label">Schnell-Zoom zu bekannten Skylines</span>
-        <div class="quick-cities" id="quick-cities"></div>
+      <div class="section" id="country-cities-section">
+        <span class="section-label" id="country-cities-title">Städte im Fokus</span>
+        <div id="country-cities-list" class="quick-cities"></div>
       </div>
     </div>
 
@@ -131,8 +126,12 @@
           <input type="checkbox" id="toggle-arcs" checked />
         </label>
         <label class="toggle-row">
-          <span>3D-Skylines beim Reinzoomen</span>
-          <input type="checkbox" id="toggle-skylines" checked />
+          <span>Städtenamen beim Reinzoomen</span>
+          <input type="checkbox" id="toggle-labels" checked />
+        </label>
+        <label class="toggle-row">
+          <span>Wolken-Layer</span>
+          <input type="checkbox" id="toggle-clouds" checked />
         </label>
         <label class="toggle-row">
           <span>Planeten &amp; Sterne im Hintergrund</span>
@@ -174,7 +173,7 @@
       <input type="text" id="pin-note-input" placeholder="z. B. Sommer 2025" />
       <div class="modal-actions">
         <button id="pin-cancel" class="action-btn secondary">Abbrechen</button>
-        <button id="pin-save" class="action-btn">Speichern &amp; Skyline bauen</button>
+        <button id="pin-save" class="action-btn">Speichern</button>
       </div>
     </div>
   </div>
@@ -183,7 +182,7 @@
   <footer class="bottom-hint">
     <span>🖱 Ziehen: Drehen</span>
     <span>•</span>
-    <span>⚲ Scrollen: Zoomen (Skylines erscheinen bei Nahansicht)</span>
+    <span>⚲ Scrollen: Zoomen (Städte erscheinen bei Nahansicht)</span>
     <span>•</span>
     <span>Rechtsklick + Ziehen: Verschieben</span>
   </footer>

@@ -34,6 +34,46 @@ body {
   z-index: 1;
 }
 
+.city-labels-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.city-label {
+  position: absolute;
+  transform: translate(-50%, -120%);
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(8, 13, 24, 0.78);
+  border: 1px solid rgba(126, 200, 227, 0.45);
+  color: #e6f4ff;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: auto;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.city-label:hover {
+  background: rgba(16, 26, 46, 0.95);
+  border-color: var(--cyan);
+}
+
+.city-label.visited {
+  border-color: var(--gold);
+  color: #ffe399;
+  background: rgba(34, 24, 8, 0.85);
+}
+
+.city-label.home {
+  border-color: var(--cyan);
+  color: #9be7ff;
+}
+
 /* Header */
 .top-header {
   position: fixed;
