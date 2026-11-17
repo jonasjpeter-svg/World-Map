@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { WORLD_CITIES } from './cities.js';
+import { COUNTRY_PEAKS } from './peaks.js';
 import { createSpaceEnvironment } from './space.js';
 import { WorldGlobe, GLOBE_RADIUS, getFeatureCenter, latLonToVector3 } from './globe.js';
 
@@ -92,7 +93,7 @@ scene.add(rimLight);
 
 // Space & Globe
 const spaceEnv = createSpaceEnvironment(scene);
-const globe = new WorldGlobe(scene);
+const globe = new WorldGlobe(scene, renderer.capabilities.getMaxAnisotropy());
 
 // Smooth Camera Fly-To
 let flyAnim = null;
@@ -354,18 +355,35 @@ clearSearchBtn.addEventListener('click', () => {
   renderSearchResults();
 });
 
-// Cities in focused country
+// Cities & highest peak in focused country
 function renderFocusedCountryCities() {
   const titleEl = document.getElementById('country-cities-title');
   const listEl = document.getElementById('country-cities-list');
   const countryName = state.focusedCountryName || 'Germany';
   const cities = getAllCities().filter((c) => c.country === countryName);
+  const peak = COUNTRY_PEAKS.find((p) => p.country === countryName);
 
-  titleEl.textContent = `Städte in ${countryName} (${cities.length})`;
+  titleEl.textContent = `Städte & Gipfel in ${countryName} (${cities.length})`;
   listEl.innerHTML = '';
 
+  if (peak) {
+    const peakCard = document.createElement('div');
+    peakCard.className = 'peak-card';
+    peakCard.style.width = '100%';
+    peakCard.innerHTML = `
+      <span>⛰ ${peak.name}</span>
+      <span class="peak-elev">${peak.elevation.toLocaleString('de-CH')} m ü. M.</span>
+    `;
+    peakCard.title = `Zum höchsten Punkt (${peak.name}) fliegen`;
+    peakCard.addEventListener('click', () => flyTo(peak.lat, peak.lon, 13.5));
+    listEl.appendChild(peakCard);
+  }
+
   if (!cities.length) {
-    listEl.innerHTML = '<p class="hint-text">Keine vordefinierten Städte – nutze „📍 Ort / Pin setzen“, um eigene hinzuzufügen.</p>';
+    const p = document.createElement('p');
+    p.className = 'hint-text';
+    p.textContent = 'Keine vordefinierten Städte – nutze „📍 Ort / Pin setzen“, um eigene hinzuzufügen.';
+    listEl.appendChild(p);
     return;
   }
 
@@ -373,11 +391,14 @@ function renderFocusedCountryCities() {
     const visited = state.visitedCities.has(city.id);
     const btn = document.createElement('button');
     btn.className = `chip-btn ${visited ? 'visited' : ''}`;
-    btn.textContent = `${visited ? '✓ ' : ''}${city.name}`;
-    btn.title = `${city.name} markieren & anfliegen`;
+    if (city.isCapital) {
+      btn.style.borderColor = '#ff3b4e';
+    }
+    btn.textContent = `${visited ? '✓ ' : ''}${city.isCapital ? '★ ' : ''}${city.name}`;
+    btn.title = `${city.isCapital ? 'Hauptstadt • ' : ''}${city.name} markieren & anfliegen`;
     btn.addEventListener('click', () => {
       toggleCityVisited(city.id);
-      flyTo(city.lat, city.lon, 14.0);
+      flyTo(city.lat, city.lon, 13.8);
     });
     listEl.appendChild(btn);
   }
@@ -684,7 +705,65 @@ function updateCityLabels() {
       labelPool.set(city.id, el);
     }
 
-    el.className = `city-label${isVisited ? ' visited' : ''}${isHome ? ' home' : ''}`;
+    el.className = `city-label${city.isCapital ? ' capital' : ''}${isVisited ? ' visited' : ''}${isHome ? ' home' : ''}`;
+    el.style.display = 'block';
+    el.style.left = `${x.toFixed(1)}px`;
+    el.style.top = `${y.toFixed(1)}px`;
+    shownCount++;
+  }
+
+  // Also show peak labels (highest elevation + m ü. M.) when zoomed in
+  for (const peak of COUNTRY_PEAKS) {
+    let el = labelPool.get(peak.id);
+    if (!isZoomedIn || shownCount >= maxLabels + 8) {
+      if (el) el.style.display = 'none';
+      continue;
+    }
+
+    _tmpVec.copy(latLonToVector3(peak.lat, peak.lon, GLOBE_RADIUS + 0.08));
+    _cityNorm.copy(_tmpVec).normalize();
+    if (_cityNorm.dot(_camNorm) < 0.35 || _tmpVec.distanceTo(camera.position) > camDist * 0.9) {
+      if (el) el.style.display = 'none';
+      continue;
+    }
+
+    _tmpVec.project(camera);
+    if (_tmpVec.z > 1) {
+      if (el) el.style.display = 'none';
+      continue;
+    }
+
+    const x = (_tmpVec.x * 0.5 + 0.5) * w;
+    const y = (-_tmpVec.y * 0.5 + 0.5) * h;
+    if (x < (sidebarOpen && w > 768 ? 360 : 20) || x > w - 20 || y < 80 || y > h - 45) {
+      if (el) el.style.display = 'none';
+      continue;
+    }
+
+    const labelText = `⛰ ${peak.name} (${peak.elevation.toLocaleString('de-CH')} m ü. M.)`;
+    const estW = labelText.length * 6.8 + 16;
+    const estH = 22;
+    const overlaps = placedBoxes.some(
+      (b) => Math.abs(b.x - x) < (b.w + estW) * 0.5 && Math.abs(b.y - y) < (b.h + estH) * 0.5
+    );
+    if (overlaps) {
+      if (el) el.style.display = 'none';
+      continue;
+    }
+    placedBoxes.push({ x, y, w: estW, h: estH });
+
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'city-label peak';
+      el.textContent = labelText;
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        flyTo(peak.lat, peak.lon, 13.5);
+      });
+      labelsLayer.appendChild(el);
+      labelPool.set(peak.id, el);
+    }
+
     el.style.display = 'block';
     el.style.left = `${x.toFixed(1)}px`;
     el.style.top = `${y.toFixed(1)}px`;
@@ -715,7 +794,7 @@ function animate() {
 
   controls.update();
   spaceEnv.update(elapsed);
-  globe.update(elapsed);
+  globe.update(elapsed, camera.position);
   updateCityLabels();
 
   renderer.render(scene, camera);
@@ -725,6 +804,7 @@ async function init() {
   loadState();
   applySettings();
   await globe.loadCountries();
+  globe.syncPeaks(COUNTRY_PEAKS);
 
   if (!localStorage.getItem(STORAGE_KEY)) {
     const germany = globe.countries.find((c) => c._name === 'Germany');

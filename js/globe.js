@@ -72,8 +72,9 @@ export function getFeatureCenter(feature) {
 }
 
 export class WorldGlobe {
-  constructor(scene) {
+  constructor(scene, maxAnisotropy = 16) {
     this.scene = scene;
+    this.maxAnisotropy = maxAnisotropy;
     this.group = new THREE.Group();
     scene.add(this.group);
 
@@ -81,7 +82,8 @@ export class WorldGlobe {
     this.visitedCountries = new Set();
 
     this.cityBeacons = null;
-    this.cityDataList = [];
+    this.peakMarkers = null;
+    this.borderLines = null;
     this.markerRings = [];
     this.arcsGroup = new THREE.Group();
     this.ringsGroup = new THREE.Group();
@@ -100,44 +102,48 @@ export class WorldGlobe {
   }
 
   _initTextures() {
-    // High-res color map
-    this.texWidth = 4096;
-    this.texHeight = 2048;
+    // 8K sharp color map
+    this.texWidth = 8192;
+    this.texHeight = 4096;
     this.canvas = document.createElement('canvas');
     this.canvas.width = this.texWidth;
     this.canvas.height = this.texHeight;
     this.ctx = this.canvas.getContext('2d');
     this.texture = new THREE.CanvasTexture(this.canvas);
     this.texture.colorSpace = THREE.SRGBColorSpace;
-    this.texture.anisotropy = 8;
+    this.texture.anisotropy = Math.min(16, this.maxAnisotropy);
+    this.texture.minFilter = THREE.LinearMipmapLinearFilter;
+    this.texture.magFilter = THREE.LinearFilter;
 
-    // Roughness & bump maps (for glossy oceans + tactile continents)
-    this.mapW = 2048;
-    this.mapH = 1024;
+    // 4K roughness & bump maps
+    this.mapW = 4096;
+    this.mapH = 2048;
     this.roughCanvas = document.createElement('canvas');
     this.roughCanvas.width = this.mapW;
     this.roughCanvas.height = this.mapH;
     this.roughCtx = this.roughCanvas.getContext('2d');
     this.roughTexture = new THREE.CanvasTexture(this.roughCanvas);
+    this.roughTexture.anisotropy = Math.min(16, this.maxAnisotropy);
 
     this.bumpCanvas = document.createElement('canvas');
     this.bumpCanvas.width = this.mapW;
     this.bumpCanvas.height = this.mapH;
     this.bumpCtx = this.bumpCanvas.getContext('2d');
     this.bumpTexture = new THREE.CanvasTexture(this.bumpCanvas);
+    this.bumpTexture.anisotropy = Math.min(16, this.maxAnisotropy);
   }
 
   _initSphere() {
-    const geo = new THREE.SphereGeometry(GLOBE_RADIUS, 112, 80);
+    const geo = new THREE.SphereGeometry(GLOBE_RADIUS, 128, 96);
     const mat = new THREE.MeshPhysicalMaterial({
       map: this.texture,
       roughnessMap: this.roughTexture,
       bumpMap: this.bumpTexture,
-      bumpScale: 0.055,
+      bumpScale: 0.035,
       roughness: 1.0,
       metalness: 0.16,
       clearcoat: 0.88,
-      clearcoatRoughness: 0.12,
+      clearcoatRoughness: 0.11,
       reflectivity: 0.95
     });
     this.sphereMesh = new THREE.Mesh(geo, mat);
@@ -151,14 +157,14 @@ export class WorldGlobe {
     const cCtx = cCanvas.getContext('2d');
     cCtx.clearRect(0, 0, 1024, 512);
 
-    for (let i = 0; i < 220; i++) {
+    for (let i = 0; i < 180; i++) {
       const x = Math.random() * 1024;
       const y = 30 + Math.random() * 452;
-      const rx = 18 + Math.random() * 75;
-      const ry = 4 + Math.random() * 16;
+      const rx = 18 + Math.random() * 70;
+      const ry = 4 + Math.random() * 14;
       const grad = cCtx.createRadialGradient(x, y, 0, x, y, rx);
-      grad.addColorStop(0, 'rgba(255, 255, 255, 0.22)');
-      grad.addColorStop(0.5, 'rgba(220, 238, 255, 0.09)');
+      grad.addColorStop(0, 'rgba(255, 255, 255, 0.2)');
+      grad.addColorStop(0.5, 'rgba(220, 238, 255, 0.08)');
       grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
       cCtx.fillStyle = grad;
       cCtx.beginPath();
@@ -169,14 +175,14 @@ export class WorldGlobe {
     const cloudTex = new THREE.CanvasTexture(cCanvas);
     cloudTex.colorSpace = THREE.SRGBColorSpace;
     const cloudGeo = new THREE.SphereGeometry(GLOBE_RADIUS * 1.008, 64, 48);
-    const cloudMat = new THREE.MeshStandardMaterial({
+    this.cloudMat = new THREE.MeshStandardMaterial({
       map: cloudTex,
       transparent: true,
-      opacity: 0.48,
+      opacity: 0.42,
       depthWrite: false,
       roughness: 0.9
     });
-    this.cloudsMesh = new THREE.Mesh(cloudGeo, cloudMat);
+    this.cloudsMesh = new THREE.Mesh(cloudGeo, this.cloudMat);
     this.group.add(this.cloudsMesh);
   }
 
@@ -220,8 +226,47 @@ export class WorldGlobe {
         return f;
       });
 
+    this._buildVectorBorders();
     this.redrawTextures();
     return this.countries;
+  }
+
+  _buildVectorBorders() {
+    if (this.borderLines) {
+      this.group.remove(this.borderLines);
+      this.borderLines.geometry.dispose();
+      this.borderLines.material.dispose();
+    }
+
+    const positions = [];
+    const r = GLOBE_RADIUS + 0.012;
+
+    for (const feature of this.countries) {
+      const geom = feature.geometry;
+      const polys = geom.type === 'Polygon' ? [geom.coordinates] : geom.coordinates;
+      for (const poly of polys) {
+        for (const ring of poly) {
+          for (let i = 0; i < ring.length - 1; i++) {
+            const [lon1, lat1] = ring[i];
+            const [lon2, lat2] = ring[i + 1];
+            if (Math.abs(lon2 - lon1) > 180) continue;
+            const p1 = latLonToVector3(lat1, lon1, r);
+            const p2 = latLonToVector3(lat2, lon2, r);
+            positions.push(p1.x, p1.y, p1.z, p2.x, p2.y, p2.z);
+          }
+        }
+      }
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    const mat = new THREE.LineBasicMaterial({
+      color: '#050608',
+      transparent: true,
+      opacity: 0.92
+    });
+    this.borderLines = new THREE.LineSegments(geo, mat);
+    this.group.add(this.borderLines);
   }
 
   _traceFeaturePath(ctx, feature, w, h) {
@@ -259,8 +304,8 @@ export class WorldGlobe {
     ctx.fillRect(0, 0, w, h);
 
     // Subtle ocean grid
-    ctx.strokeStyle = 'rgba(110, 190, 255, 0.05)';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(110, 190, 255, 0.045)';
+    ctx.lineWidth = 1.5;
     for (let lon = -180; lon <= 180; lon += 15) {
       const x = ((lon + 180) / 360) * w;
       ctx.beginPath();
@@ -276,38 +321,31 @@ export class WorldGlobe {
       ctx.stroke();
     }
 
-    // Roughness: oceans = very glossy (dark grey #242424 -> roughness ~0.14)
     roughCtx.fillStyle = '#242424';
     roughCtx.fillRect(0, 0, mapW, mapH);
 
-    // Bump: oceans = flat (#181818)
     bumpCtx.fillStyle = '#181818';
     bumpCtx.fillRect(0, 0, mapW, mapH);
 
-    // 2. Countries
+    // 2. Countries with crisp black borders
     for (const feature of this.countries) {
       const isVisited = this.visitedCountries.has(feature._id);
 
-      // Color map
       this._traceFeaturePath(ctx, feature, w, h);
       if (isVisited) {
         ctx.fillStyle = '#dba93b';
-        ctx.strokeStyle = '#ffe594';
-        ctx.lineWidth = 2.0;
       } else {
-        ctx.fillStyle = '#293847';
-        ctx.strokeStyle = '#537391';
-        ctx.lineWidth = 1.25;
+        ctx.fillStyle = '#2c3d4f';
       }
+      ctx.strokeStyle = '#07080b';
+      ctx.lineWidth = 2.6;
       ctx.fill();
       ctx.stroke();
 
-      // Roughness map (visited = glossy gold #303030, unvisited = satin #686868)
       this._traceFeaturePath(roughCtx, feature, mapW, mapH);
-      roughCtx.fillStyle = isVisited ? '#303030' : '#686868';
+      roughCtx.fillStyle = isVisited ? '#2e2e2e' : '#646464';
       roughCtx.fill();
 
-      // Bump map (continents raised slightly)
       this._traceFeaturePath(bumpCtx, feature, mapW, mapH);
       bumpCtx.fillStyle = isVisited ? '#b0b0b0' : '#808080';
       bumpCtx.fill();
@@ -331,26 +369,24 @@ export class WorldGlobe {
   }
 
   syncCities(allCities, visitedCityIds, homeBaseId) {
-    this.cityDataList = allCities;
-
-    // 1. Single InstancedMesh for all city beacons (1 draw call = ultra fast!)
     if (this.cityBeacons) {
       this.group.remove(this.cityBeacons);
       this.cityBeacons.geometry.dispose();
       this.cityBeacons.material.dispose();
     }
 
-    const beaconGeo = new THREE.SphereGeometry(0.055, 10, 10);
+    const beaconGeo = new THREE.SphereGeometry(0.055, 12, 12);
     const beaconMat = new THREE.MeshStandardMaterial({
       color: '#ffffff',
-      roughness: 0.15,
-      metalness: 0.4,
-      emissive: '#1e354d',
-      emissiveIntensity: 0.5
+      roughness: 0.12,
+      metalness: 0.35,
+      emissive: '#1e1e26',
+      emissiveIntensity: 0.45
     });
 
     this.cityBeacons = new THREE.InstancedMesh(beaconGeo, beaconMat, allCities.length);
     const dummy = new THREE.Object3D();
+    const colorCapital = new THREE.Color('#ff2e43');
     const colorVisited = new THREE.Color('#ffd369');
     const colorHome = new THREE.Color('#48d1ff');
     const colorDefault = new THREE.Color('#7ec8e3');
@@ -358,20 +394,24 @@ export class WorldGlobe {
     allCities.forEach((city, idx) => {
       const isVisited = visitedCityIds.has(city.id);
       const isHome = city.id === homeBaseId;
-      const pos = latLonToVector3(city.lat, city.lon, GLOBE_RADIUS + 0.03);
+      const isCap = Boolean(city.isCapital);
+      const pos = latLonToVector3(city.lat, city.lon, GLOBE_RADIUS + 0.032);
       dummy.position.copy(pos);
-      const scale = isHome ? 1.55 : isVisited ? 1.35 : 0.72;
+      const scale = isCap ? 1.35 : isHome ? 1.45 : isVisited ? 1.25 : 0.72;
       dummy.scale.setScalar(scale);
       dummy.updateMatrix();
       this.cityBeacons.setMatrixAt(idx, dummy.matrix);
-      this.cityBeacons.setColorAt(idx, isHome ? colorHome : isVisited ? colorVisited : colorDefault);
+
+      // Capitals are always marked in red; otherwise home/visited/default
+      const col = isCap ? colorCapital : isHome ? colorHome : isVisited ? colorVisited : colorDefault;
+      this.cityBeacons.setColorAt(idx, col);
     });
 
     this.cityBeacons.instanceMatrix.needsUpdate = true;
     if (this.cityBeacons.instanceColor) this.cityBeacons.instanceColor.needsUpdate = true;
     this.group.add(this.cityBeacons);
 
-    // 2. Pulsing target rings for visited cities
+    // Pulsing target rings for visited cities
     while (this.ringsGroup.children.length) {
       this.ringsGroup.remove(this.ringsGroup.children[0]);
     }
@@ -379,22 +419,56 @@ export class WorldGlobe {
 
     for (const city of allCities) {
       if (visitedCityIds.has(city.id)) {
-        this._createPulsingRings(city.lat, city.lon, city.id === homeBaseId);
+        this._createPulsingRings(city.lat, city.lon, city.id === homeBaseId, Boolean(city.isCapital));
       }
     }
 
-    // 3. Connection arcs
     this._rebuildArcs(allCities, visitedCityIds, homeBaseId);
   }
 
-  _createPulsingRings(lat, lon, isHome) {
+  syncPeaks(peaks) {
+    if (this.peakMarkers) {
+      this.group.remove(this.peakMarkers);
+      this.peakMarkers.geometry.dispose();
+      this.peakMarkers.material.dispose();
+    }
+
+    const coneGeo = new THREE.ConeGeometry(0.055, 0.14, 4);
+    coneGeo.translate(0, 0.07, 0);
+    const coneMat = new THREE.MeshStandardMaterial({
+      color: '#a8ffea',
+      roughness: 0.25,
+      metalness: 0.3,
+      emissive: '#1e6e58',
+      emissiveIntensity: 0.55
+    });
+
+    this.peakMarkers = new THREE.InstancedMesh(coneGeo, coneMat, peaks.length);
+    const dummy = new THREE.Object3D();
+    const up = new THREE.Vector3(0, 1, 0);
+
+    peaks.forEach((peak, idx) => {
+      const pos = latLonToVector3(peak.lat, peak.lon, GLOBE_RADIUS + 0.015);
+      dummy.position.copy(pos);
+      const normal = pos.clone().normalize();
+      dummy.quaternion.setFromUnitVectors(up, normal);
+      dummy.scale.setScalar(1);
+      dummy.updateMatrix();
+      this.peakMarkers.setMatrixAt(idx, dummy.matrix);
+    });
+
+    this.peakMarkers.instanceMatrix.needsUpdate = true;
+    this.group.add(this.peakMarkers);
+  }
+
+  _createPulsingRings(lat, lon, isHome, isCapital) {
     const pos = latLonToVector3(lat, lon, GLOBE_RADIUS + 0.028);
     const normal = pos.clone().normalize();
     const ringGroup = new THREE.Group();
     ringGroup.position.copy(pos);
     ringGroup.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
 
-    const color = isHome ? '#48d1ff' : '#ffd369';
+    const color = isCapital ? '#ff3b4e' : isHome ? '#48d1ff' : '#ffd369';
     for (let i = 0; i < 2; i++) {
       const ringGeo = new THREE.RingGeometry(0.11, 0.145, 28);
       ringGeo.rotateX(-Math.PI / 2);
@@ -457,9 +531,13 @@ export class WorldGlobe {
     }
   }
 
-  update(elapsed) {
-    this.cloudsMesh.visible = this.showClouds;
-    if (this.showClouds) {
+  update(elapsed, cameraPosition) {
+    // Fade clouds out smoothly when zoomed in so surface stays razor sharp!
+    const camDist = cameraPosition.length();
+    const cloudFade = THREE.MathUtils.clamp((camDist - 16.5) / 6.0, 0, 1);
+    this.cloudsMesh.visible = this.showClouds && cloudFade > 0.02;
+    if (this.cloudsMesh.visible) {
+      this.cloudMat.opacity = 0.42 * cloudFade;
       this.cloudsMesh.rotation.y = elapsed * 0.008;
     }
 

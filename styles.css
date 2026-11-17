@@ -74,6 +74,46 @@ body {
   color: #9be7ff;
 }
 
+.city-label.capital {
+  border-color: #ff3b4e;
+  color: #ffb8bf;
+  background: rgba(42, 8, 14, 0.88);
+}
+
+.city-label.capital.visited {
+  border-color: #ff3b4e;
+  box-shadow: 0 0 10px rgba(255, 59, 78, 0.45);
+}
+
+.city-label.peak {
+  border-color: #6ff7cb;
+  color: #c7ffec;
+  background: rgba(7, 30, 24, 0.86);
+}
+
+.peak-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: rgba(111, 247, 203, 0.08);
+  border: 1px solid rgba(111, 247, 203, 0.35);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.peak-card:hover {
+  background: rgba(111, 247, 203, 0.16);
+}
+
+.peak-elev {
+  color: #6ff7cb;
+  font-weight: 700;
+  font-size: 0.78rem;
+}
+
 /* Header */
 .top-header {
   position: fixed;
