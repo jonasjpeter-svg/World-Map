@@ -76,7 +76,7 @@ controls.enableDamping = true;
 controls.dampingFactor = 0.09;
 controls.rotateSpeed = 0.26;
 controls.zoomSpeed = 0.45;
-controls.minDistance = 10.35;
+controls.minDistance = 10.06;
 controls.maxDistance = 68;
 
 // Realistic Day/Night lighting (clearly shows where the Sun shines)
@@ -525,6 +525,7 @@ function renderVisitedLists() {
 }
 
 // Settings bindings
+const tileStyleSelect = document.getElementById('tile-style-select');
 const toggleArcs = document.getElementById('toggle-arcs');
 const toggleLabels = document.getElementById('toggle-labels');
 const toggleClouds = document.getElementById('toggle-clouds');
@@ -549,6 +550,10 @@ function applySettings() {
     labelPool.clear();
   }
 }
+
+tileStyleSelect.addEventListener('change', () => {
+  globe.tileLayer.setStyle(tileStyleSelect.value);
+});
 
 toggleArcs.addEventListener('change', () => {
   state.settings.arcs = toggleArcs.checked;
@@ -855,9 +860,9 @@ function animate() {
   }
 
   // Slower, calm & ultra-precise movement scaled by altitude
-  const alt = Math.max(0.2, camera.position.length() - GLOBE_RADIUS);
-  controls.rotateSpeed = THREE.MathUtils.clamp(alt * 0.038, 0.02, 0.26);
-  controls.zoomSpeed = THREE.MathUtils.clamp(alt * 0.08, 0.14, 0.45);
+  const alt = Math.max(0.05, camera.position.length() - GLOBE_RADIUS);
+  controls.rotateSpeed = THREE.MathUtils.clamp(alt * 0.036, 0.008, 0.26);
+  controls.zoomSpeed = THREE.MathUtils.clamp(alt * 0.08, 0.08, 0.45);
 
   if (flyAnim) {
     flyAnim.progress += 0.04;

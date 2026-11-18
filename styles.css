@@ -44,14 +44,16 @@ body {
 
 .city-label {
   position: absolute;
-  transform: translate(-50%, -120%);
+  transform: translate(-50%, -125%);
   padding: 2px 7px;
-  border-radius: 6px;
-  background: rgba(8, 13, 24, 0.78);
-  border: 1px solid rgba(126, 200, 227, 0.45);
-  color: #e6f4ff;
-  font-size: 0.72rem;
-  font-weight: 600;
+  border-radius: 99px;
+  background: rgba(8, 12, 20, 0.58);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #f0f5fa;
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.2px;
   white-space: nowrap;
   pointer-events: auto;
   cursor: pointer;
@@ -59,36 +61,36 @@ body {
 }
 
 .city-label:hover {
-  background: rgba(16, 26, 46, 0.95);
+  background: rgba(16, 24, 38, 0.88);
   border-color: var(--cyan);
 }
 
 .city-label.visited {
-  border-color: var(--gold);
-  color: #ffe399;
-  background: rgba(34, 24, 8, 0.85);
+  border-color: rgba(224, 179, 76, 0.75);
+  color: #ffe8ad;
+  background: rgba(28, 20, 6, 0.68);
 }
 
 .city-label.home {
-  border-color: var(--cyan);
-  color: #9be7ff;
+  border-color: rgba(72, 209, 255, 0.8);
+  color: #b5ecff;
 }
 
 .city-label.capital {
-  border-color: #ff3b4e;
-  color: #ffb8bf;
-  background: rgba(42, 8, 14, 0.88);
+  border-color: rgba(255, 59, 78, 0.75);
+  color: #ffd1d6;
+  background: rgba(34, 8, 12, 0.68);
 }
 
 .city-label.capital.visited {
   border-color: #ff3b4e;
-  box-shadow: 0 0 10px rgba(255, 59, 78, 0.45);
+  box-shadow: 0 0 8px rgba(255, 59, 78, 0.35);
 }
 
 .city-label.peak {
-  border-color: #6ff7cb;
-  color: #c7ffec;
-  background: rgba(7, 30, 24, 0.86);
+  border-color: rgba(168, 255, 234, 0.5);
+  color: #d6fff4;
+  background: rgba(8, 24, 20, 0.62);
 }
 
 .peak-card {

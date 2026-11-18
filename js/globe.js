@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import * as topojson from 'topojson-client';
+import { GlobeTileLayer } from './tiles.js';
 
 export const GLOBE_RADIUS = 10;
 
@@ -97,6 +98,7 @@ export class WorldGlobe {
 
     this._initTextures();
     this._initSphere();
+    this.tileLayer = new GlobeTileLayer(this.group, this.maxAnisotropy);
     this._initClouds();
     this._initAtmosphere();
     this._initSunMarker();
@@ -268,7 +270,7 @@ export class WorldGlobe {
     }
 
     const positions = [];
-    const r = GLOBE_RADIUS + 0.005;
+    const r = GLOBE_RADIUS + 0.008;
 
     for (const feature of this.countries) {
       const geom = feature.geometry;
@@ -404,34 +406,42 @@ export class WorldGlobe {
       this.cityBeacons.material.dispose();
     }
 
-    const beaconGeo = new THREE.SphereGeometry(0.042, 12, 12);
-    const beaconMat = new THREE.MeshStandardMaterial({
+    // Sleek, flat circular pinpoints flush on the globe surface
+    const beaconGeo = new THREE.CircleGeometry(0.026, 24);
+    beaconGeo.rotateX(-Math.PI / 2);
+    const beaconMat = new THREE.MeshBasicMaterial({
       color: '#ffffff',
-      roughness: 0.12,
-      metalness: 0.35,
-      emissive: '#1e1e26',
-      emissiveIntensity: 0.45
+      side: THREE.DoubleSide
     });
 
     this.cityBeacons = new THREE.InstancedMesh(beaconGeo, beaconMat, allCities.length);
+    this.cityBasePositions = [];
+    this.cityBaseScales = [];
+
     const dummy = new THREE.Object3D();
-    const colorCapital = new THREE.Color('#ff2e43');
+    const up = new THREE.Vector3(0, 1, 0);
+    const colorCapital = new THREE.Color('#ff3b4e');
     const colorVisited = new THREE.Color('#ffd369');
     const colorHome = new THREE.Color('#48d1ff');
-    const colorDefault = new THREE.Color('#7ec8e3');
+    const colorDefault = new THREE.Color('#e6f2ff');
 
     allCities.forEach((city, idx) => {
       const isVisited = visitedCityIds.has(city.id);
       const isHome = city.id === homeBaseId;
       const isCap = Boolean(city.isCapital);
-      const pos = latLonToVector3(city.lat, city.lon, GLOBE_RADIUS + 0.032);
+      const pos = latLonToVector3(city.lat, city.lon, GLOBE_RADIUS + 0.013);
+      const normal = pos.clone().normalize();
+      const baseScale = isCap ? 1.4 : isHome ? 1.5 : isVisited ? 1.25 : 0.8;
+
+      this.cityBasePositions.push({ pos, normal });
+      this.cityBaseScales.push(baseScale);
+
       dummy.position.copy(pos);
-      const scale = isCap ? 1.35 : isHome ? 1.45 : isVisited ? 1.25 : 0.72;
-      dummy.scale.setScalar(scale);
+      dummy.quaternion.setFromUnitVectors(up, normal);
+      dummy.scale.setScalar(baseScale);
       dummy.updateMatrix();
       this.cityBeacons.setMatrixAt(idx, dummy.matrix);
 
-      // Capitals are always marked in red; otherwise home/visited/default
       const col = isCap ? colorCapital : isHome ? colorHome : isVisited ? colorVisited : colorDefault;
       this.cityBeacons.setColorAt(idx, col);
     });
@@ -462,24 +472,25 @@ export class WorldGlobe {
       this.peakMarkers.material.dispose();
     }
 
-    const coneGeo = new THREE.ConeGeometry(0.042, 0.11, 4);
-    coneGeo.translate(0, 0.055, 0);
-    const coneMat = new THREE.MeshStandardMaterial({
+    // Sleek, flat minimal alpine triangle flush on the surface
+    const triGeo = new THREE.CircleGeometry(0.03, 3);
+    triGeo.rotateX(-Math.PI / 2);
+    const triMat = new THREE.MeshBasicMaterial({
       color: '#a8ffea',
-      roughness: 0.25,
-      metalness: 0.3,
-      emissive: '#1e6e58',
-      emissiveIntensity: 0.55
+      side: THREE.DoubleSide
     });
 
-    this.peakMarkers = new THREE.InstancedMesh(coneGeo, coneMat, peaks.length);
+    this.peakMarkers = new THREE.InstancedMesh(triGeo, triMat, peaks.length);
+    this.peakBasePositions = [];
     const dummy = new THREE.Object3D();
     const up = new THREE.Vector3(0, 1, 0);
 
     peaks.forEach((peak, idx) => {
-      const pos = latLonToVector3(peak.lat, peak.lon, GLOBE_RADIUS + 0.015);
-      dummy.position.copy(pos);
+      const pos = latLonToVector3(peak.lat, peak.lon, GLOBE_RADIUS + 0.013);
       const normal = pos.clone().normalize();
+      this.peakBasePositions.push({ pos, normal });
+
+      dummy.position.copy(pos);
       dummy.quaternion.setFromUnitVectors(up, normal);
       dummy.scale.setScalar(1);
       dummy.updateMatrix();
@@ -561,8 +572,43 @@ export class WorldGlobe {
   }
 
   update(elapsed, cameraPosition) {
-    // Fade clouds out smoothly when zoomed in so surface stays razor sharp!
+    // Stream Google-Maps-style high-res tiles when zoomed in!
+    this.tileLayer.update(cameraPosition, performance.now());
+
+    // Scale markers smoothly with altitude so they stay sleek & delicate at close zoom
     const camDist = cameraPosition.length();
+    const alt = Math.max(0.04, camDist - GLOBE_RADIUS);
+    const markerZoomScale = THREE.MathUtils.clamp(alt / 5.0, 0.18, 1.0);
+
+    if (this.cityBeacons && this.cityBasePositions) {
+      const dummy = new THREE.Object3D();
+      const up = new THREE.Vector3(0, 1, 0);
+      for (let i = 0; i < this.cityBasePositions.length; i++) {
+        const { pos, normal } = this.cityBasePositions[i];
+        dummy.position.copy(pos);
+        dummy.quaternion.setFromUnitVectors(up, normal);
+        dummy.scale.setScalar(this.cityBaseScales[i] * markerZoomScale);
+        dummy.updateMatrix();
+        this.cityBeacons.setMatrixAt(i, dummy.matrix);
+      }
+      this.cityBeacons.instanceMatrix.needsUpdate = true;
+    }
+
+    if (this.peakMarkers && this.peakBasePositions) {
+      const dummy = new THREE.Object3D();
+      const up = new THREE.Vector3(0, 1, 0);
+      for (let i = 0; i < this.peakBasePositions.length; i++) {
+        const { pos, normal } = this.peakBasePositions[i];
+        dummy.position.copy(pos);
+        dummy.quaternion.setFromUnitVectors(up, normal);
+        dummy.scale.setScalar(markerZoomScale);
+        dummy.updateMatrix();
+        this.peakMarkers.setMatrixAt(i, dummy.matrix);
+      }
+      this.peakMarkers.instanceMatrix.needsUpdate = true;
+    }
+
+    // Fade clouds out smoothly when zoomed in so surface stays razor sharp!
     const cloudFade = THREE.MathUtils.clamp((camDist - 16.5) / 6.0, 0, 1);
     this.cloudsMesh.visible = this.showClouds && cloudFade > 0.02;
     if (this.cloudsMesh.visible) {
