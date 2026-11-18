@@ -134,6 +134,15 @@ export class WorldGlobe {
     this.bumpCtx = this.bumpCanvas.getContext('2d');
     this.bumpTexture = new THREE.CanvasTexture(this.bumpCanvas);
     this.bumpTexture.anisotropy = Math.min(16, this.maxAnisotropy);
+
+    // Night population lights map (emissive)
+    this.nightCanvas = document.createElement('canvas');
+    this.nightCanvas.width = this.mapW;
+    this.nightCanvas.height = this.mapH;
+    this.nightCtx = this.nightCanvas.getContext('2d');
+    this.nightTexture = new THREE.CanvasTexture(this.nightCanvas);
+    this.nightTexture.colorSpace = THREE.SRGBColorSpace;
+    this.nightTexture.anisotropy = Math.min(16, this.maxAnisotropy);
   }
 
   _initSphere() {
@@ -143,6 +152,9 @@ export class WorldGlobe {
       roughnessMap: this.roughTexture,
       bumpMap: this.bumpTexture,
       bumpScale: 0.014,
+      emissive: new THREE.Color('#ffbe59'),
+      emissiveMap: this.nightTexture,
+      emissiveIntensity: 1.45,
       roughness: 1.0,
       metalness: 0.16,
       clearcoat: 0.88,
@@ -450,6 +462,8 @@ export class WorldGlobe {
     if (this.cityBeacons.instanceColor) this.cityBeacons.instanceColor.needsUpdate = true;
     this.group.add(this.cityBeacons);
 
+    this._buildNightLights(allCities);
+
     // Pulsing target rings for visited cities
     while (this.ringsGroup.children.length) {
       this.ringsGroup.remove(this.ringsGroup.children[0]);
@@ -463,6 +477,45 @@ export class WorldGlobe {
     }
 
     this._rebuildArcs(allCities, visitedCityIds, homeBaseId);
+  }
+
+  _buildNightLights(allCities) {
+    const { nightCtx: ctx, mapW: w, mapH: h } = this;
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, w, h);
+
+    // Paint warm golden population light clusters around all cities
+    for (const city of allCities) {
+      const cx = ((city.lon + 180) / 360) * w;
+      const cy = ((90 - city.lat) / 180) * h;
+
+      // Main metro glow
+      const r = city.isCapital ? 15 : 10;
+      const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+      grad.addColorStop(0, 'rgba(255, 225, 150, 0.92)');
+      grad.addColorStop(0.3, 'rgba(255, 185, 85, 0.48)');
+      grad.addColorStop(0.7, 'rgba(255, 145, 45, 0.14)');
+      grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Deterministic surrounding town/suburb scatter for realistic population belts
+      let seed = (Math.abs(Math.round(city.lat * 100 + city.lon * 37)) % 997) + 1;
+      for (let s = 0; s < 10; s++) {
+        seed = (seed * 16807) % 2147483647;
+        const angle = (seed / 2147483647) * Math.PI * 2;
+        seed = (seed * 16807) % 2147483647;
+        const dist = 4 + (seed / 2147483647) * 16;
+        const sx = cx + Math.cos(angle) * dist;
+        const sy = cy + Math.sin(angle) * dist * 0.7;
+        ctx.fillStyle = 'rgba(255, 200, 110, 0.55)';
+        ctx.fillRect(sx, sy, 1.5, 1.5);
+      }
+    }
+
+    this.nightTexture.needsUpdate = true;
   }
 
   syncPeaks(peaks) {

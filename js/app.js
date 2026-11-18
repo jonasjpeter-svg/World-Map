@@ -80,7 +80,7 @@ controls.minDistance = 10.06;
 controls.maxDistance = 68;
 
 // Realistic Day/Night lighting (clearly shows where the Sun shines)
-const hemiLight = new THREE.HemisphereLight('#7aa8de', '#04070e', 0.16);
+const hemiLight = new THREE.HemisphereLight('#7aa8de', '#080e1c', 0.25);
 scene.add(hemiLight);
 
 const sunLight = new THREE.DirectionalLight('#fff5db', 5.2);
@@ -672,14 +672,14 @@ function updateCityLabels() {
   const cities = getAllCities();
 
   let shownCount = 0;
-  const maxLabels = isZoomedIn ? 35 : 14;
+  const maxLabels = isZoomedIn ? 14 : 6;
   const placedBoxes = [];
   const sidebarOpen = !sidebar.classList.contains('collapsed');
 
-  // Sort so visited & home cities get priority over unvisited neighbors
+  // Sort so visited, home & capital cities get priority
   const sortedCities = [...cities].sort((a, b) => {
-    const aPrio = (a.id === state.homeBaseId ? 2 : 0) + (state.visitedCities.has(a.id) ? 1 : 0);
-    const bPrio = (b.id === state.homeBaseId ? 2 : 0) + (state.visitedCities.has(b.id) ? 1 : 0);
+    const aPrio = (a.id === state.homeBaseId ? 4 : 0) + (state.visitedCities.has(a.id) ? 2 : 0) + (a.isCapital ? 1 : 0);
+    const bPrio = (b.id === state.homeBaseId ? 4 : 0) + (state.visitedCities.has(b.id) ? 2 : 0) + (b.isCapital ? 1 : 0);
     return bPrio - aPrio;
   });
 
@@ -722,9 +722,9 @@ function updateCityLabels() {
       continue;
     }
 
-    // Simple 2D collision avoidance so labels never overlap
-    const estW = city.name.length * 7.2 + 18;
-    const estH = 22;
+    // Generous 2D collision avoidance so labels stay sparse & never cover the map
+    const estW = city.name.length * 7.2 + 34;
+    const estH = 34;
     const overlaps = placedBoxes.some(
       (b) => Math.abs(b.x - x) < (b.w + estW) * 0.5 && Math.abs(b.y - y) < (b.h + estH) * 0.5
     );
@@ -753,10 +753,11 @@ function updateCityLabels() {
     shownCount++;
   }
 
-  // Also show peak labels (highest elevation + m ü. M.) when zoomed in
+  // Also show up to 3 nearby peak labels (highest elevation + m ü. M.) when zoomed in
+  let peakShown = 0;
   for (const peak of COUNTRY_PEAKS) {
     let el = labelPool.get(peak.id);
-    if (!isZoomedIn || shownCount >= maxLabels + 8) {
+    if (!isZoomedIn || peakShown >= 3) {
       if (el) el.style.display = 'none';
       continue;
     }
@@ -809,6 +810,7 @@ function updateCityLabels() {
     el.style.left = `${x.toFixed(1)}px`;
     el.style.top = `${y.toFixed(1)}px`;
     shownCount++;
+    peakShown++;
   }
 
   // Live Sun Marker Label
