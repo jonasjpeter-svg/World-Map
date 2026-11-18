@@ -99,6 +99,7 @@ export class WorldGlobe {
     this._initSphere();
     this._initClouds();
     this._initAtmosphere();
+    this._initSunMarker();
   }
 
   _initTextures() {
@@ -139,7 +140,7 @@ export class WorldGlobe {
       map: this.texture,
       roughnessMap: this.roughTexture,
       bumpMap: this.bumpTexture,
-      bumpScale: 0.035,
+      bumpScale: 0.014,
       roughness: 1.0,
       metalness: 0.16,
       clearcoat: 0.88,
@@ -212,6 +213,34 @@ export class WorldGlobe {
     this.group.add(atmos);
   }
 
+  _initSunMarker() {
+    this.sunMarkerGroup = new THREE.Group();
+    const core = new THREE.Mesh(
+      new THREE.CircleGeometry(0.14, 32),
+      new THREE.MeshBasicMaterial({ color: '#ffe875', side: THREE.DoubleSide })
+    );
+    core.rotation.x = -Math.PI / 2;
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.19, 0.25, 36),
+      new THREE.MeshBasicMaterial({
+        color: '#ffb732',
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.8
+      })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    this.sunMarkerGroup.add(core, ring);
+    this.group.add(this.sunMarkerGroup);
+  }
+
+  setSubsolarPoint(lat, lon) {
+    const pos = latLonToVector3(lat, lon, GLOBE_RADIUS + 0.035);
+    this.sunMarkerGroup.position.copy(pos);
+    const normal = pos.clone().normalize();
+    this.sunMarkerGroup.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
+  }
+
   async loadCountries() {
     const res = await fetch('data/countries-110m.json');
     const world = await res.json();
@@ -239,7 +268,7 @@ export class WorldGlobe {
     }
 
     const positions = [];
-    const r = GLOBE_RADIUS + 0.012;
+    const r = GLOBE_RADIUS + 0.005;
 
     for (const feature of this.countries) {
       const geom = feature.geometry;
@@ -375,7 +404,7 @@ export class WorldGlobe {
       this.cityBeacons.material.dispose();
     }
 
-    const beaconGeo = new THREE.SphereGeometry(0.055, 12, 12);
+    const beaconGeo = new THREE.SphereGeometry(0.042, 12, 12);
     const beaconMat = new THREE.MeshStandardMaterial({
       color: '#ffffff',
       roughness: 0.12,
@@ -433,8 +462,8 @@ export class WorldGlobe {
       this.peakMarkers.material.dispose();
     }
 
-    const coneGeo = new THREE.ConeGeometry(0.055, 0.14, 4);
-    coneGeo.translate(0, 0.07, 0);
+    const coneGeo = new THREE.ConeGeometry(0.042, 0.11, 4);
+    coneGeo.translate(0, 0.055, 0);
     const coneMat = new THREE.MeshStandardMaterial({
       color: '#a8ffea',
       roughness: 0.25,

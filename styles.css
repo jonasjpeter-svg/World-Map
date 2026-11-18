@@ -181,6 +181,32 @@ body {
   background: var(--panel-border);
 }
 
+.sun-pill-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 99px;
+  border: 1px solid rgba(255, 210, 90, 0.45);
+  background: rgba(255, 200, 60, 0.14);
+  color: #ffe28a;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s;
+}
+
+.sun-pill-btn:hover {
+  background: rgba(255, 200, 60, 0.28);
+  transform: scale(1.04);
+}
+
+.city-label.sun {
+  border-color: #ffd359;
+  color: #ffe89e;
+  background: rgba(44, 28, 4, 0.88);
+}
+
 /* Toggle Sidebar Button */
 .toggle-sidebar-btn {
   position: fixed;

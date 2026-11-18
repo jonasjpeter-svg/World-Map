@@ -310,6 +310,9 @@ export function createSpaceEnvironment(scene) {
     },
     setVisible(visible) {
       spaceGroup.visible = visible;
+    },
+    setSunDirection(dir) {
+      sunGroup.position.copy(dir).normalize().multiplyScalar(155);
     }
   };
 }

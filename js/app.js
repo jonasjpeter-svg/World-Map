@@ -61,7 +61,7 @@ const container = document.getElementById('canvas-container');
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#03060d');
 
-const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 800);
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.02, 800);
 camera.position.set(0, 8, 28);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -76,20 +76,52 @@ controls.enableDamping = true;
 controls.dampingFactor = 0.075;
 controls.rotateSpeed = 0.65;
 controls.zoomSpeed = 1.0;
-controls.minDistance = 11.8;
+controls.minDistance = 10.35;
 controls.maxDistance = 68;
 
 // Glossy, realistic lighting
-const hemiLight = new THREE.HemisphereLight('#bfe0ff', '#101b2e', 0.9);
+const hemiLight = new THREE.HemisphereLight('#bfe0ff', '#18253d', 0.95);
 scene.add(hemiLight);
 
-const sunLight = new THREE.DirectionalLight('#fff5e0', 2.8);
-sunLight.position.set(55, 28, 45);
+const sunLight = new THREE.DirectionalLight('#fff5e0', 3.0);
 scene.add(sunLight);
 
-const rimLight = new THREE.DirectionalLight('#55d6ff', 1.1);
+const rimLight = new THREE.DirectionalLight('#55d6ff', 0.9);
 rimLight.position.set(-45, -18, -35);
 scene.add(rimLight);
+
+// Real-time subsolar point from current UTC time
+let currentSunPoint = { lat: 0, lon: 0 };
+function getSubsolarPoint(date = new Date()) {
+  const startOfYear = new Date(Date.UTC(date.getUTCFullYear(), 0, 0));
+  const dayOfYear = (date - startOfYear) / 86400000;
+  const lat = -23.44 * Math.cos(((2 * Math.PI) / 365) * (dayOfYear + 10));
+
+  const utcHours = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
+  let lon = (12 - utcHours) * 15;
+  while (lon > 180) lon -= 360;
+  while (lon < -180) lon += 360;
+
+  return { lat, lon };
+}
+
+function updateRealTimeSun() {
+  const now = new Date();
+  currentSunPoint = getSubsolarPoint(now);
+  const sunDir = latLonToVector3(currentSunPoint.lat, currentSunPoint.lon, 1).normalize();
+
+  sunLight.position.copy(sunDir).multiplyScalar(75);
+  rimLight.position.copy(sunDir).multiplyScalar(-55);
+  spaceEnv.setSunDirection(sunDir);
+  globe.setSubsolarPoint(currentSunPoint.lat, currentSunPoint.lon);
+
+  const labelEl = document.getElementById('sun-time-label');
+  if (labelEl) {
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    labelEl.textContent = `${hh}:${mm}`;
+  }
+}
 
 // Space & Globe
 const spaceEnv = createSpaceEnvironment(scene);
@@ -544,6 +576,10 @@ toggleAutoRotate.addEventListener('change', () => {
   applySettings();
 });
 
+document.getElementById('btn-fly-sun').addEventListener('click', () => {
+  flyTo(currentSunPoint.lat, currentSunPoint.lon, 20.0);
+});
+
 document.getElementById('btn-reset-camera').addEventListener('click', () => {
   flyAnim = {
     startPos: camera.position.clone(),
@@ -769,6 +805,36 @@ function updateCityLabels() {
     el.style.top = `${y.toFixed(1)}px`;
     shownCount++;
   }
+
+  // Live Sun Marker Label
+  let sunEl = labelPool.get('__sun__');
+  _tmpVec.copy(latLonToVector3(currentSunPoint.lat, currentSunPoint.lon, GLOBE_RADIUS + 0.08));
+  _cityNorm.copy(_tmpVec).normalize();
+  if (_cityNorm.dot(_camNorm) > 0.15) {
+    _tmpVec.project(camera);
+    const sx = (_tmpVec.x * 0.5 + 0.5) * w;
+    const sy = (-_tmpVec.y * 0.5 + 0.5) * h;
+    if (_tmpVec.z <= 1 && sx > 20 && sx < w - 20 && sy > 70 && sy < h - 40) {
+      if (!sunEl) {
+        sunEl = document.createElement('div');
+        sunEl.className = 'city-label sun';
+        sunEl.textContent = '☀️ Sonne (Live)';
+        sunEl.addEventListener('click', (e) => {
+          e.stopPropagation();
+          flyTo(currentSunPoint.lat, currentSunPoint.lon, 18.0);
+        });
+        labelsLayer.appendChild(sunEl);
+        labelPool.set('__sun__', sunEl);
+      }
+      sunEl.style.display = 'block';
+      sunEl.style.left = `${sx.toFixed(1)}px`;
+      sunEl.style.top = `${sy.toFixed(1)}px`;
+    } else if (sunEl) {
+      sunEl.style.display = 'none';
+    }
+  } else if (sunEl) {
+    sunEl.style.display = 'none';
+  }
 }
 
 window.addEventListener('resize', () => {
@@ -778,9 +844,20 @@ window.addEventListener('resize', () => {
 });
 
 const clock = new THREE.Clock();
+let lastSunSync = 0;
 function animate() {
   requestAnimationFrame(animate);
   const elapsed = clock.getElapsedTime();
+
+  if (elapsed - lastSunSync > 15) {
+    updateRealTimeSun();
+    lastSunSync = elapsed;
+  }
+
+  // Scale rotateSpeed & zoomSpeed smoothly with altitude for ultra-precise deep zoom
+  const alt = Math.max(0.2, camera.position.length() - GLOBE_RADIUS);
+  controls.rotateSpeed = THREE.MathUtils.clamp(alt * 0.095, 0.045, 0.65);
+  controls.zoomSpeed = THREE.MathUtils.clamp(alt * 0.16, 0.25, 1.0);
 
   if (flyAnim) {
     flyAnim.progress += 0.04;
@@ -803,6 +880,7 @@ function animate() {
 async function init() {
   loadState();
   applySettings();
+  updateRealTimeSun();
   await globe.loadCountries();
   globe.syncPeaks(COUNTRY_PEAKS);
 
