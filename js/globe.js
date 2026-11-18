@@ -242,7 +242,7 @@ export class WorldGlobe {
   }
 
   async loadCountries() {
-    const res = await fetch('data/countries-110m.json');
+    const res = await fetch('data/countries-50m.json');
     const world = await res.json();
     const geojson = topojson.feature(world, world.objects.countries);
 
@@ -326,9 +326,9 @@ export class WorldGlobe {
 
     // 1. Deep glossy sapphire ocean gradient
     const oceanGrad = ctx.createLinearGradient(0, 0, 0, h);
-    oceanGrad.addColorStop(0, '#07162b');
-    oceanGrad.addColorStop(0.5, '#0b2242');
-    oceanGrad.addColorStop(1, '#07162b');
+    oceanGrad.addColorStop(0, '#0d2b52');
+    oceanGrad.addColorStop(0.5, '#154278');
+    oceanGrad.addColorStop(1, '#0d2b52');
     ctx.fillStyle = oceanGrad;
     ctx.fillRect(0, 0, w, h);
 
@@ -362,12 +362,12 @@ export class WorldGlobe {
 
       this._traceFeaturePath(ctx, feature, w, h);
       if (isVisited) {
-        ctx.fillStyle = '#dba93b';
+        ctx.fillStyle = '#e8b642';
       } else {
-        ctx.fillStyle = '#2c3d4f';
+        ctx.fillStyle = '#3c546b';
       }
       ctx.strokeStyle = '#07080b';
-      ctx.lineWidth = 2.6;
+      ctx.lineWidth = 1.6;
       ctx.fill();
       ctx.stroke();
 

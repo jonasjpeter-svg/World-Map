@@ -73,20 +73,20 @@ container.appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
-controls.dampingFactor = 0.075;
-controls.rotateSpeed = 0.65;
-controls.zoomSpeed = 1.0;
+controls.dampingFactor = 0.09;
+controls.rotateSpeed = 0.26;
+controls.zoomSpeed = 0.45;
 controls.minDistance = 10.35;
 controls.maxDistance = 68;
 
-// Glossy, realistic lighting
-const hemiLight = new THREE.HemisphereLight('#bfe0ff', '#18253d', 0.95);
+// Realistic Day/Night lighting (clearly shows where the Sun shines)
+const hemiLight = new THREE.HemisphereLight('#7aa8de', '#04070e', 0.16);
 scene.add(hemiLight);
 
-const sunLight = new THREE.DirectionalLight('#fff5e0', 3.0);
+const sunLight = new THREE.DirectionalLight('#fff5db', 5.2);
 scene.add(sunLight);
 
-const rimLight = new THREE.DirectionalLight('#55d6ff', 0.9);
+const rimLight = new THREE.DirectionalLight('#3aa8ff', 0.28);
 rimLight.position.set(-45, -18, -35);
 scene.add(rimLight);
 
@@ -854,10 +854,10 @@ function animate() {
     lastSunSync = elapsed;
   }
 
-  // Scale rotateSpeed & zoomSpeed smoothly with altitude for ultra-precise deep zoom
+  // Slower, calm & ultra-precise movement scaled by altitude
   const alt = Math.max(0.2, camera.position.length() - GLOBE_RADIUS);
-  controls.rotateSpeed = THREE.MathUtils.clamp(alt * 0.095, 0.045, 0.65);
-  controls.zoomSpeed = THREE.MathUtils.clamp(alt * 0.16, 0.25, 1.0);
+  controls.rotateSpeed = THREE.MathUtils.clamp(alt * 0.038, 0.02, 0.26);
+  controls.zoomSpeed = THREE.MathUtils.clamp(alt * 0.08, 0.14, 0.45);
 
   if (flyAnim) {
     flyAnim.progress += 0.04;
